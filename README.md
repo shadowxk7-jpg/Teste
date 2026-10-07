@@ -1,11 +1,12 @@
 -- ================================================================= --
---   DARK SHADOW HUB v4.0  |  LUXURY EDITION                          --
---   Merge a Mini Army: Auto Merge inteligente (só na sua base),      --
---   Economy, Combat, ESP, Anti-Lag automático e modo Mobile/Emulador --
+--   DARK SHADOW HUB v4.1  |  LUXURY EDITION                          --
+--   Merge a Mini Army: Auto Merge SEM teleporte (anda livre),        --
+--   Auto Rebirth / Upgrade silenciosos, efeitos sonoros com volume,  --
+--   scripts por jogo (só aparecem no jogo certo), Anti-Lag e Mobile. --
 -- ================================================================= --
 --  ÍNDICE
 --   1. Serviços e ambiente
---   2. Utilitários e tema
+--   2. Utilitários, tema e sons
 --   3. Estado global
 --   4. Interface base (janela, sidebar, header)
 --   5. Framework de abas e sub-abas
@@ -44,7 +45,7 @@ for _, n in ipairs({"ShadowTechHub", "ShadowESP"}) do
 end
 
 -- ==========================================
--- 2. UTILITÁRIOS E TEMA
+-- 2. UTILITÁRIOS, TEMA E SONS
 -- ==========================================
 local IS_TOUCH = UserInputService.TouchEnabled -- celular / emulador
 
@@ -168,7 +169,52 @@ local ICONS = {
 	Combat   = "rbxassetid://10734938210",
 	Server   = "rbxassetid://10734938384",
 	Shield   = "rbxassetid://10734938450",
+	Bolt     = "rbxassetid://10734950309",
 }
+
+-- EFEITOS SONOROS
+-- Um único som base com tons diferentes (grave = desligar/erro, agudo = ligar/aviso).
+-- Se quiser outro som, troque só o Id abaixo. O volume é ajustado em Settings > Sound.
+local Sfx = {
+	Enabled = true,
+	Volume  = 0.5,
+	Id      = "rbxassetid://6895079853",
+	pool    = {},
+	last    = {},
+	holder  = nil, -- definido depois que a ScreenGui existe
+}
+local SFX_KINDS = {            -- {tom, ganho}
+	Click  = {1.00, 1.0},
+	On     = {1.30, 1.0},
+	Off    = {0.80, 1.0},
+	Open   = {1.10, 1.0},
+	Close  = {0.85, 1.0},
+	Notify = {1.60, 0.8},
+	Error  = {0.60, 1.0},
+	Slide  = {1.25, 0.4},
+}
+
+function Sfx.Play(kind, minGap)
+	if not Sfx.Enabled or Sfx.Volume <= 0 or not Sfx.holder then return end
+	local now = os.clock()
+	if minGap and Sfx.last[kind] and now - Sfx.last[kind] < minGap then return end
+	Sfx.last[kind] = now
+	local k = SFX_KINDS[kind] or SFX_KINDS.Click
+	local s = Sfx.pool[kind]
+	if not s or not s.Parent then
+		s = Instance.new("Sound")
+		s.Name = "Sfx_" .. kind
+		s.SoundId = Sfx.Id
+		s.Parent = Sfx.holder
+		Sfx.pool[kind] = s
+	end
+	pcall(function()
+		s.PlaybackSpeed = k[1]
+		s.Volume = math.clamp(Sfx.Volume * k[2], 0, 1)
+		s.TimePosition = 0
+		s:Play()
+	end)
+end
 
 -- ==========================================
 -- 3. ESTADO GLOBAL
@@ -219,6 +265,7 @@ local ScreenGui = create("ScreenGui", {
 	Name = "ShadowTechHub", ResetOnSpawn = false, IgnoreGuiInset = true,
 	DisplayOrder = 999, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = ParentGui,
 })
+Sfx.holder = ScreenGui
 
 local InputBlocker = create("TextButton", {
 	Name = "InputBlocker", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
@@ -255,7 +302,7 @@ do
 	end
 end
 
--- Botão flutuante
+-- Botão flutuante (pulsa de leve para chamar atenção)
 local FloatingBtn = create("Frame", {
 	Name = "FloatingButton", Size = UDim2.fromOffset(48, 48), Position = UDim2.new(0, 16, 0.3, 0),
 	BackgroundColor3 = COLORS.Sidebar, BorderSizePixel = 0, Active = true, ZIndex = 10, Parent = ScreenGui,
@@ -266,6 +313,10 @@ create("ImageLabel", {
 	Size = UDim2.fromOffset(24, 24), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
 	BackgroundTransparency = 1, Image = ICONS.Logo, ImageColor3 = COLORS.Accent, Parent = FloatingBtn,
 })
+pcall(function()
+	TweenService:Create(BtnStroke, TweenInfo.new(1.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+		{Thickness = 3}):Play()
+end)
 
 -- Janela principal (tamanho menor no celular)
 local HUB_W, HUB_H, SIDEBAR_W = 660, 420, 150
@@ -320,9 +371,12 @@ do
 		Size = UDim2.fromOffset(26, 26), Position = UDim2.new(0, 12, 0.5, -13),
 		BackgroundTransparency = 1, Image = ICONS.Logo, ImageColor3 = COLORS.Accent, Parent = logo,
 	})
-	label({Size = UDim2.new(1, -46, 0, 16), Position = UDim2.new(0, 44, 0.5, -15), Text = "DARK SHADOW",
+	local title = label({Size = UDim2.new(1, -46, 0, 16), Position = UDim2.new(0, 44, 0.5, -15), Text = "DARK SHADOW",
 		Font = Enum.Font.GothamBlack, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Parent = logo})
-	label({Size = UDim2.new(1, -46, 0, 12), Position = UDim2.new(0, 44, 0.5, 2), Text = "HUB  v4.0",
+	create("UIGradient", {
+		Color = ColorSequence.new(COLORS.TextMain, COLORS.AccentGlow), Parent = title,
+	})
+	label({Size = UDim2.new(1, -46, 0, 12), Position = UDim2.new(0, 44, 0.5, 2), Text = "HUB  v4.1",
 		TextSize = 10, TextColor3 = COLORS.Accent, Parent = logo})
 
 	TabsContainer = create("ScrollingFrame", {
@@ -400,8 +454,27 @@ do
 	SearchBox.Focused:Connect(function() tween(ss, 0.2, {Color = COLORS.Accent}) end)
 	SearchBox.FocusLost:Connect(function() tween(ss, 0.2, {Color = COLORS.Stroke}) end)
 
+	-- Linha de destaque com degradê abaixo do cabeçalho
+	local accentLine = create("Frame", {
+		Size = UDim2.new(1, -20, 0, 2), Position = UDim2.new(0, 10, 0, 56),
+		BackgroundColor3 = COLORS.Accent, BorderSizePixel = 0, Parent = content,
+	})
+	create("UIGradient", {
+		Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, COLORS.AccentDark),
+			ColorSequenceKeypoint.new(0.5, COLORS.AccentGlow),
+			ColorSequenceKeypoint.new(1, COLORS.AccentDark),
+		}),
+		Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.9),
+			NumberSequenceKeypoint.new(0.5, 0.2),
+			NumberSequenceKeypoint.new(1, 0.9),
+		}),
+		Parent = accentLine,
+	})
+
 	PagesContainer = create("Frame", {
-		Size = UDim2.new(1, -20, 1, -64), Position = UDim2.new(0, 10, 0, 58), BackgroundTransparency = 1, Parent = content,
+		Size = UDim2.new(1, -20, 1, -68), Position = UDim2.new(0, 10, 0, 62), BackgroundTransparency = 1, Parent = content,
 	})
 	NoResults = label({
 		Size = UDim2.fromScale(1, 1), Text = "No results found", TextSize = 13, TextColor3 = COLORS.TextDark,
@@ -467,7 +540,10 @@ local function createTab(name, iconId, useScroll, order)
 	if useScroll then content = createScroll(page) end
 
 	tabs[name] = {Btn = btn, Page = page, Icon = icon, Line = line, Label = lbl, IconId = iconId, Active = false}
-	btn.MouseButton1Click:Connect(function() setActiveTab(name) end)
+	btn.MouseButton1Click:Connect(function()
+		if activeTab ~= name then Sfx.Play("Click") end
+		setActiveTab(name)
+	end)
 	btn.MouseEnter:Connect(function() if not tabs[name].Active then tween(btn, 0.15, {BackgroundTransparency = 0.8}) end end)
 	btn.MouseLeave:Connect(function() if not tabs[name].Active then tween(btn, 0.15, {BackgroundTransparency = 1}) end end)
 	return content
@@ -514,7 +590,10 @@ local function createSubGroup(tabName, page)
 		local pg = create("Frame", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false, Parent = holder})
 		local scroll = createScroll(pg)
 		group.Subs[name] = {Btn = btn, Page = pg, Icon = icon, Label = lbl}
-		btn.MouseButton1Click:Connect(function() group.Set(name) end)
+		btn.MouseButton1Click:Connect(function()
+			if group.Active ~= name then Sfx.Play("Click") end
+			group.Set(name)
+		end)
 		if not group.Active then group.Set(name) end
 		return scroll
 	end
@@ -537,10 +616,12 @@ do
 		Padding = UDim.new(0, 8), Parent = holder,
 	})
 	local active = 0
-	Notify = function(title, text, duration)
+	-- noSound = true quando outro som (ex.: toggle) já tocou
+	Notify = function(title, text, duration, noSound)
 		if not notificationsEnabled or active >= 3 then return end
 		active = active + 1
 		duration = duration or 2.5
+		if not noSound then Sfx.Play("Notify", 0.15) end
 		local wrapper = create("Frame", {
 			Size = UDim2.new(1, 0, 0, 50), BackgroundTransparency = 1, ZIndex = 50,
 			LayoutOrder = nextOrder(holder), Parent = holder,
@@ -633,8 +714,9 @@ local function AddToggle(sec, title, desc, default, callback)
 		tween(knob, 0.2, {Position = state and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8)})
 		tween(switch, 0.2, {BackgroundColor3 = state and COLORS.Accent or COLORS.SwitchOff})
 		if not silent then
+			Sfx.Play(state and "On" or "Off")
 			safeCall(callback, state)
-			Notify(title, state and "Enabled" or "Disabled", 1.5)
+			Notify(title, state and "Enabled" or "Disabled", 1.5, true)
 		end
 	end
 	function control.Get() return state end
@@ -681,6 +763,7 @@ local function AddSlider(sec, title, minVal, maxVal, default, step, unit, callba
 		valLabel.Text = fmt(v)
 		if fire and v ~= last then
 			last = v
+			Sfx.Play("Slide", 0.07)
 			safeCall(callback, v)
 		end
 		last = v
@@ -737,7 +820,10 @@ local function AddButton(sec, title, callback, danger)
 	btn.MouseLeave:Connect(function() tween(btn, 0.15, {BackgroundColor3 = base}) end)
 	btn.MouseButton1Down:Connect(function() tween(btn, 0.08, {Size = UDim2.new(1, -34, 0, 32)}) end)
 	btn.MouseButton1Up:Connect(function() tween(btn, 0.12, {Size = UDim2.new(1, -28, 0, 34)}) end)
-	btn.MouseButton1Click:Connect(function() safeCall(callback) end)
+	btn.MouseButton1Click:Connect(function()
+		Sfx.Play(danger and "Error" or "Click")
+		safeCall(callback)
+	end)
 	registerRow(sec, row, title)
 	return btn
 end
@@ -762,6 +848,7 @@ local function AddInput(sec, title, placeholder, default, callback)
 	box.Focused:Connect(function() tween(bs, 0.2, {Color = COLORS.Accent}) end)
 	box.FocusLost:Connect(function()
 		tween(bs, 0.2, {Color = COLORS.Stroke})
+		Sfx.Play("Click")
 		safeCall(callback, box.Text)
 	end)
 	registerRow(sec, row, title)
@@ -1135,7 +1222,7 @@ local function setAutoRejoin(on)
 	end
 end
 
--- Hook de remotes (usado só pelo "Learn Merge Remote"; inerte fora disso)
+-- Hook de remotes (usado só pelo aprendizado do merge; inerte fora disso)
 local function installHook()
 	if env.__ShadowHookInstalled then return true end
 	if not (hookmetamethod and getnamecallmethod) then return false end
@@ -1261,11 +1348,10 @@ ESP.Register("Players", function()
 end)
 
 -- ==========================================
--- 10. ABAS PRINCIPAIS
+-- 10. ABAS PRINCIPAIS (universais: aparecem em qualquer jogo)
 -- ==========================================
 
 -- ---------- 10.1 HOME ----------
-local loadGameByName -- definido na seção 11
 do
 	local HomeScroll = createTab("Home", ICONS.Home, true, ORDER.Home)
 
@@ -1324,12 +1410,8 @@ do
 	Refs.gameScript = AddInfo(gameSec, "Game script", "None for this game")
 	Refs.device = AddInfo(gameSec, "Mode", IS_TOUCH and "Mobile / Emulator" or "PC")
 
-	local scripts = AddSection(HomeScroll, "Game Scripts")
-	AddText(scripts, "Scripts de jogo carregam sozinhos. Se a detecção falhar, force manualmente:")
-	AddButton(scripts, "Load: Merge a Mini Army", function() loadGameByName("Merge a Mini Army") end)
-
 	local about = AddSection(HomeScroll, "About")
-	AddText(about, "Dark Shadow Hub v4.0\nMenu: botão flutuante" .. (IS_TOUCH and "" or " ou tecla (padrão Right Shift)") .. ". Arraste a sidebar ou o cabeçalho para mover. Performance Guard ligado por padrão.")
+	AddText(about, "Dark Shadow Hub v4.1\nMenu: botão flutuante" .. (IS_TOUCH and "" or " ou tecla (padrão Right Shift)") .. ". Arraste a sidebar ou o cabeçalho para mover. Scripts de jogo aparecem sozinhos, só no jogo certo. Performance Guard ligado por padrão.")
 end
 
 -- ---------- 10.2 PLAYER ----------
@@ -1548,6 +1630,7 @@ do
 		stroke(Refs.keyBtn, COLORS.Stroke, 1)
 		Refs.keyBtn.MouseButton1Click:Connect(function()
 			listeningKey = true
+			Sfx.Play("Click")
 			Refs.keyBtn.Text = "Press a key..."
 			tween(Refs.keyBtn, 0.15, {BackgroundColor3 = COLORS.AccentDark})
 		end)
@@ -1567,14 +1650,28 @@ do
 		SnowContainer.Visible = on and not Perf.Lite and isOpen
 	end)
 
+	-- Efeitos sonoros com controle de volume
+	local snd = AddSection(scroll, "Sound", "Settings")
+	AddToggle(snd, "Sound Effects", "Clicks, toggles, menu and alerts", Sfx.Enabled, function(on)
+		Sfx.Enabled = on
+	end)
+	AddSlider(snd, "Volume", 0, 100, math.floor(Sfx.Volume * 100), 5, "%", function(v)
+		Sfx.Volume = v / 100
+	end)
+	AddButton(snd, "Test Sound", function()
+		Sfx.Play("On")
+		task.delay(0.18, function() Sfx.Play("Notify") end)
+	end)
+
 	local danger = AddSection(scroll, "Danger Zone", "Settings")
 	AddButton(danger, "Unload Hub", function() UnloadHub() end, true)
 end
 
 -- ================================================================= --
 -- 11. SISTEMA DE SCRIPTS POR JOGO
---  Cada jogo vira uma ABA própria (só no jogo dele).
---  Para adicionar outro jogo: copie o bloco RegisterGame({...}).
+--  Cada jogo vira uma ABA própria e SÓ aparece dentro do jogo dele.
+--  Para adicionar outro jogo: copie o bloco RegisterGame({...}) e
+--  preencha PlaceIds / GameIds (exato) ou NameMatch (pelo nome).
 -- ================================================================= --
 local cleanupFns = {}
 local GameModules = {}
@@ -1613,6 +1710,7 @@ local function matchesGame(def, gameName)
 	return false
 end
 
+-- Só é chamado quando o jogo atual combina com o script (a aba nem existe nos outros jogos)
 local function loadGame(def)
 	if loadedGames[def.Name] or not ScreenGui.Parent then return false end
 	loadedGames[def.Name] = true
@@ -1630,25 +1728,18 @@ local function loadGame(def)
 	return ok
 end
 
-loadGameByName = function(name)
-	for _, def in ipairs(GameModules) do
-		if def.Name == name then
-			if loadedGames[name] then
-				Notify("Game Script", name .. " is already loaded", 2.5)
-				setActiveTab(def.TabName)
-			elseif loadGame(def) then
-				setActiveTab(def.TabName)
-			end
-			return
-		end
-	end
-end
-
 -- ================================================================= --
 -- 12. JOGO: MERGE A MINI ARMY
---  Sub-abas: Merge | Economy | Combat | ESP | Tools
---  Auto Merge inteligente: só na SUA base, passando por cima de
---  duas unidades iguais (teleporte + toque), sem você estar lá.
+--  Sub-abas: Quick | Merge | Economy | Combat | ESP | Tools
+--
+--  AUTO MERGE (novo): você anda livre. O script acha pares iguais na
+--  SUA base e funde sem teleporte, em lotes, e confere se deu certo.
+--  Ordem de métodos: remote aprendido > prompt > toque (firetouch).
+--  Teleporte só existe como "fallback" opcional (desligado).
+--
+--  AUTO REBIRTH / UPGRADE (novo): modo silencioso. Clica nos botões
+--  mesmo com o menu do jogo fechado (nada aparece na tela e o mouse
+--  nunca é usado), então você segue andando normalmente.
 -- ================================================================= --
 RegisterGame({
 	Name = "Merge a Mini Army",
@@ -1665,11 +1756,14 @@ RegisterGame({
 
 		local cfg = {
 			-- merge
-			Merge = false, MergeDelay = 0.15, Return = true, Walk = true, Drag = false, UseRemote = true,
-			MergeBtn = false, UnitWords = {}, BaseRadius = 70,
+			Merge = false, MergeDelay = 0.1, Batch = 3, UseRemote = true, AutoLearn = true,
+			Walk = false,            -- fallback com teleporte (desligado por padrão)
+			Drag = false, MergeBtn = false, UnitWords = {}, BaseRadius = 70,
 			-- economia
 			Upgrade = false, UpgradeEvery = 1, UpgradeWords = {}, Rebirth = false, RebirthEvery = 20,
 			Collect = false, Spin = false, Equip = false, Buy = false, ActionDelay = 0.8,
+			Silent = true,           -- clica sem precisar abrir menus
+			MouseFallback = false,   -- clique de mouse virtual (só com botão visível)
 			-- combate
 			Deploy = false, DeployEvery = 5, Battle = false, Attack = false, AtkEvent = true, AtkCamp = true,
 			AtkBase = false, AtkTeleport = true, KeepDeployed = true, AtkTimeout = 12,
@@ -1797,6 +1891,7 @@ RegisterGame({
 			unittype = true, type = true, class = true, kind = true, unitname = true, rarity = true}
 		local sizeCache = setmetatable({}, {__mode = "k"})
 		local cooldown = setmetatable({}, {__mode = "k"})
+		local failCount = setmetatable({}, {__mode = "k"})
 		local overlap = OverlapParams.new()
 		overlap.FilterType = Enum.RaycastFilterType.Exclude
 		overlap.MaxParts = 2500
@@ -1876,7 +1971,7 @@ RegisterGame({
 
 		local function scanUnits(force)
 			local now = os.clock()
-			if not force and now - scan.t < (Perf.Lite and 2 or 1) then return scan end
+			if not force and now - scan.t < (Perf.Lite and 2 or 0.6) then return scan end
 			scan.t = now
 			local groups, total, seen = {}, 0, {}
 			local function consider(m)
@@ -1910,59 +2005,83 @@ RegisterGame({
 			return scan
 		end
 
-		local function pickPair()
+		-- Escolhe vários pares DISJUNTOS (cada unidade só aparece uma vez), sempre os mais próximos
+		local function pickPairs(maxN)
 			local sc = scanUnits()
 			local now = os.clock()
-			local bestList
+			local out = {}
 			for _, list in pairs(sc.groups) do
 				local alive = {}
 				for _, u in ipairs(list) do
 					if u.Parent and (not cooldown[u] or cooldown[u] < now) then alive[#alive + 1] = u end
 				end
-				if #alive >= 2 and (not bestList or #alive > #bestList) then bestList = alive end
-			end
-			if not bestList then return nil end
-			local a = bestList[1]
-			local pa = unitPart(a)
-			local b, bd
-			for i = 2, #bestList do
-				local pb = unitPart(bestList[i])
-				if pa and pb then
-					local d = (pa.Position - pb.Position).Magnitude
-					if not bd or d < bd then b, bd = bestList[i], d end
-				elseif not b then
-					b = bestList[i]
+				while #alive >= 2 and #out < maxN do
+					local a = table.remove(alive, 1)
+					local pa = unitPart(a)
+					local bi, bd
+					for i = 1, #alive do
+						local pb = unitPart(alive[i])
+						if pa and pb then
+							local d = (pa.Position - pb.Position).Magnitude
+							if not bd or d < bd then bi, bd = i, d end
+						elseif not bi then
+							bi = i
+						end
+					end
+					local b = table.remove(alive, bi)
+					out[#out + 1] = {a, b}
 				end
+				if #out >= maxN then break end
 			end
-			return a, b
+			return out
 		end
 
 		-- ======================================================
-		-- C) EXECUÇÃO DO MERGE (andar por cima / remote aprendido)
+		-- C) EXECUÇÃO DO MERGE (sem teleporte)
 		-- ======================================================
 		local learned = env.__ShadowMiniLearn
 		local recording, captured = false, nil
 
-		local function stepOnto(root, u)
-			local p = unitPart(u)
-			if not p or not p.Parent then return false end
-			root.CFrame = CFrame.new(p.Position + Vector3.new(0, 1.5, 0))
-			root.AssemblyLinearVelocity = Vector3.zero
-			if firetouchinterest then
-				pcall(function()
-					firetouchinterest(root, p, 0)
-					firetouchinterest(root, p, 1)
-				end)
-			end
-			if fireproximityprompt then
-				for _, d in ipairs(u:GetDescendants()) do
-					if d:IsA("ProximityPrompt") and d.Enabled
-						and hasAny(string.lower(d.ActionText .. " " .. d.ObjectText .. " " .. d.Name), MERGE_WORDS) then
-						pcall(fireproximityprompt, d)
-					end
+		-- Prompts de merge de cada unidade (em cache, para não varrer descendentes toda hora)
+		local promptCache = setmetatable({}, {__mode = "k"})
+		local function mergePrompts(u)
+			local list = promptCache[u]
+			if list then return list end
+			list = {}
+			for _, d in ipairs(u:GetDescendants()) do
+				if d:IsA("ProximityPrompt")
+					and hasAny(string.lower(d.ActionText .. " " .. d.ObjectText .. " " .. d.Name), MERGE_WORDS) then
+					list[#list + 1] = d
 				end
 			end
-			return true
+			promptCache[u] = list
+			return list
+		end
+
+		local function firePrompts(u)
+			if not fireproximityprompt then return end
+			for _, d in ipairs(mergePrompts(u)) do
+				if d.Parent and d.Enabled then pcall(fireproximityprompt, d) end
+			end
+		end
+
+		-- Toque virtual: não move o seu personagem
+		local function touchPair(a, b)
+			local pa, pb = unitPart(a), unitPart(b)
+			if not (pa and pb) then return end
+			if cfg.Drag then pcall(function() a:PivotTo(CFrame.new(pb.Position)) end) end
+			if firetouchinterest then
+				local root = getRoot()
+				pcall(function()
+					if root then
+						firetouchinterest(root, pa, 0); firetouchinterest(root, pa, 1)
+						firetouchinterest(root, pb, 0); firetouchinterest(root, pb, 1)
+					end
+					firetouchinterest(pa, pb, 0); firetouchinterest(pa, pb, 1)
+				end)
+			end
+			firePrompts(a)
+			firePrompts(b)
 		end
 
 		local function fireLearned(a, b)
@@ -1985,71 +2104,88 @@ RegisterGame({
 			return true
 		end
 
-		local function doMerge(a, b)
+		-- Fallback opcional: vai até a unidade, toca e VOLTA na hora
+		local function teleportMerge(a, b)
+			local root = getRoot()
+			if not root then return end
+			local back = root.CFrame
+			for _, u in ipairs({a, b}) do
+				local p = unitPart(u)
+				if p and p.Parent then
+					root.CFrame = CFrame.new(p.Position + Vector3.new(0, 1.5, 0))
+					root.AssemblyLinearVelocity = Vector3.zero
+					if firetouchinterest then
+						pcall(function() firetouchinterest(root, p, 0); firetouchinterest(root, p, 1) end)
+					end
+					firePrompts(u)
+					task.wait(0.06)
+				end
+			end
+			root.CFrame = back
+			root.AssemblyLinearVelocity = Vector3.zero
+		end
+
+		local function fireOne(a, b)
 			local used = false
 			if cfg.UseRemote and learned and not learned.direct and #learned.inst >= 1 then
 				used = fireLearned(a, b)
 			end
-			if not used then
-				local root = getRoot()
-				if not root then return end
-				if cfg.Walk then
-					stepOnto(root, a)
-					task.wait(0.06)
-					stepOnto(root, b)
-				end
-				if cfg.Drag then
-					local pa, pb = unitPart(a), unitPart(b)
-					if pa and pb then
-						pcall(function() a:PivotTo(CFrame.new(pb.Position)) end)
-						if firetouchinterest then
-							pcall(function()
-								firetouchinterest(pa, pb, 0)
-								firetouchinterest(pa, pb, 1)
-							end)
-						end
-					end
+			if not used then touchPair(a, b) end
+		end
+
+		-- Dispara um lote, espera um instante e CONFERE o resultado de cada par
+		local function runBatch(list)
+			local keys = {}
+			for i, p in ipairs(list) do
+				keys[i] = unitKey(p[1])
+				fireOne(p[1], p[2])
+			end
+			task.wait(0.3)
+			local now = os.clock()
+			local retry
+			for i, p in ipairs(list) do
+				local a, b = p[1], p[2]
+				local merged = (not a.Parent) or (not b.Parent) or (unitKey(a) ~= keys[i])
+				if merged then
+					stats.merges = stats.merges + 1
+					failCount[a], failCount[b] = nil, nil
+				else
+					local n = (failCount[a] or 0) + 1
+					failCount[a], failCount[b] = n, n
+					local t = now + math.min(1.5 * n, 10)
+					cooldown[a], cooldown[b] = t, t
+					stats.fails = stats.fails + 1
+					if n >= 3 and cfg.Walk and not retry then retry = p end
 				end
 			end
-			task.wait(0.2)
-			if a.Parent and b.Parent then
-				local t = os.clock() + 8
-				cooldown[a], cooldown[b] = t, t
-				stats.fails = stats.fails + 1
-			else
-				stats.merges = stats.merges + 1
-				scan.t = 0
-			end
+			if retry then teleportMerge(retry[1], retry[2]) end
+			scan.t = 0
 		end
 
 		-- Loop do Auto Merge
 		local mergeOnce = false
-		local originCF
 		task.spawn(function()
 			while running and ctx.ScreenGui.Parent do
 				if cfg.Merge or mergeOnce then
 					if ensureBase() then
 						if cfg.UseRemote and learned and learned.direct and learned.remote then
-							fireLearned()
-							stats.merges = stats.merges + 1
+							local sc = scanUnits()
+							if sc.pairs > 0 then
+								fireLearned()
+								stats.merges = stats.merges + 1
+							else
+								mergeOnce = false
+							end
 							task.wait(math.max(cfg.MergeDelay, Perf.Lite and 0.4 or 0.1))
 						else
-							local a, b = pickPair()
-							if a and b then
-								if not originCF then
-									local r = getRoot()
-									originCF = r and r.CFrame
-								end
-								doMerge(a, b)
+							local list = pickPairs(cfg.Batch)
+							if #list > 0 then
+								local ok, err = pcall(runBatch, list)
+								if not ok then warn("[ShadowHub] merge: " .. tostring(err)) end
 								task.wait(math.max(cfg.MergeDelay, Perf.Lite and 0.3 or 0.03))
 							else
-								if originCF and cfg.Return then
-									local r = getRoot()
-									if r then r.CFrame = originCF end
-								end
-								originCF = nil
 								mergeOnce = false
-								task.wait(0.4)
+								task.wait(0.35)
 							end
 						end
 					else
@@ -2077,7 +2213,8 @@ RegisterGame({
 				end
 			end
 			local byName = hasAny(lname, MERGE_WORDS)
-			if byName or #inst > 0 then
+			-- precisa ter nome de merge OU duas unidades da sua base como argumento
+			if byName or #inst >= 2 then
 				if not captured or byName then
 					captured = {remote = remote, method = method, args = args, inst = inst,
 						byName = byName, direct = (#inst == 0)}
@@ -2085,8 +2222,34 @@ RegisterGame({
 			end
 		end
 
+		local function startLearning(seconds, quiet)
+			if recording then return end
+			if not installHook() then
+				if not quiet then ctx.Notify("Learn", "Executor lacks hookmetamethod. Touch mode still works", 5) end
+				return
+			end
+			if not ensureBase(quiet) then return end
+			captured, recording = nil, true
+			env.__ShadowHookFn = onRemote
+			if not quiet then ctx.Notify("Learning", "Merge two units BY HAND now (" .. seconds .. "s)", 6) end
+			task.spawn(function()
+				local t0 = os.clock()
+				while running and recording and not captured and os.clock() - t0 < seconds do task.wait(0.25) end
+				recording = false
+				env.__ShadowHookFn = nil
+				if captured then
+					learned = captured
+					env.__ShadowMiniLearn = learned
+					if Refs.mRemote then Refs.mRemote.Text = learned.remote.Name end
+					ctx.Notify("Learned", learned.remote.Name .. (learned.direct and " (direct)" or " (targets)"), 4)
+				elseif not quiet then
+					ctx.Notify("Learn", "Nothing captured. Try again", 4)
+				end
+			end)
+		end
+
 		-- ======================================================
-		-- D) BOTÕES DA INTERFACE (Economy / Combat / extras)
+		-- D) BOTÕES DA INTERFACE DO JOGO (Economy / Combat / extras)
 		-- ======================================================
 		local CATS = {
 			{key = "Rebirth",  words = {"rebirth"}, boostOk = true},
@@ -2167,7 +2330,8 @@ RegisterGame({
 			return false
 		end
 
-		-- Clique sem duplicar; sem firesignal (alguns emuladores) usa clique virtual
+		-- Clique SILENCIOSO: dispara os eventos do botão direto (funciona com o menu fechado e
+		-- sem mexer no mouse). O clique virtual só entra se você ativar "Mouse fallback".
 		local function clickButton(b)
 			if fireSignal(b.MouseButton1Click) then return true end
 			if fireSignal(b.Activated) then return true end
@@ -2175,7 +2339,7 @@ RegisterGame({
 				if pcall(firesignal, b.MouseButton1Click) then return true end
 				if pcall(firesignal, b.Activated) then return true end
 			end
-			if VIM then
+			if VIM and cfg.MouseFallback and isShown(b) then
 				local sg = b:FindFirstAncestorWhichIsA("ScreenGui")
 				local inset = (sg and sg.IgnoreGuiInset) and Vector2.zero or GuiService:GetGuiInset()
 				local pos = b.AbsolutePosition + b.AbsoluteSize / 2 + inset
@@ -2211,7 +2375,8 @@ RegisterGame({
 						end
 						-- Filtro de upgrades escolhidos
 						if key == "Upgrade" and #cfg.UpgradeWords > 0 and not hasAny(info.text, cfg.UpgradeWords) then key = nil end
-						if key and isShown(b) then
+						-- Modo silencioso: não exige o botão visível
+						if key and (cfg.Silent or isShown(b)) then
 							if clickButton(b) then
 								n = n + 1
 								stats.clicks = stats.clicks + 1
@@ -2233,7 +2398,7 @@ RegisterGame({
 			local waited = 0
 			while not scanDone and waited < 3 do task.wait(0.1); waited = waited + 0.1 end
 			local n = clickCategory({[key] = true}, os.clock(), key == "Rebirth")
-			ctx.Notify(key, n > 0 and (n .. " click(s)") or "No visible button. Open the menu in the game", 3)
+			ctx.Notify(key, n > 0 and (n .. " click(s)") or (cfg.Silent and "No matching button found" or "No visible button. Open the menu in the game"), 3)
 		end
 
 		local DUE_KEYS = {"Rebirth", "Upgrade", "Deploy", "MergeBtn", "Collect", "Spin", "Equip", "Battle", "Buy", "Custom"}
@@ -2261,7 +2426,7 @@ RegisterGame({
 				end
 				if any then
 					ensureButtonTracking()
-					clickCategory(due, now, cfg.Rebirth)
+					pcall(clickCategory, due, now, cfg.Rebirth)
 				end
 			end
 		end)
@@ -2503,13 +2668,43 @@ RegisterGame({
 		end)
 
 		-- ======================================================
-		-- G) INTERFACE: Merge | Economy | Combat | ESP | Tools
+		-- G) INTERFACE: Quick | Merge | Economy | Combat | ESP | Tools
 		-- ======================================================
 		local function simple(sec, key, title, desc)
 			ctl[key] = AddToggle(sec, title, desc, false, function(on)
 				cfg[key] = on
 				if on then ensureButtonTracking() end
 			end)
+		end
+
+		-- ---------- QUICK (painel principal: liga e anda livre) ----------
+		local pq = ctx.Page("Quick", ctx.Icons.Bolt)
+		do
+			local qs = pq.Section("Main Automation")
+			ctl.Merge = AddToggle(qs, "Auto Merge", "No teleport. Merges equal units in your base", false, function(on)
+				cfg.Merge = on
+				if on then
+					ensureBase()
+					if cfg.AutoLearn and not learned then startLearning(600, true) end
+				end
+			end)
+			ctl.Upgrade = AddToggle(qs, "Auto Upgrade", "Silent. No menu opens on your screen", false, function(on)
+				cfg.Upgrade = on
+				if on then ensureButtonTracking() end
+			end)
+			ctl.Rebirth = AddToggle(qs, "Auto Rebirth", "Silent. Careful: resets your progress", false, function(on)
+				cfg.Rebirth = on
+				if on then ensureButtonTracking() end
+			end)
+			simple(qs, "Collect", "Auto Collect / Claim", "Silent claim of rewards")
+			simple(qs, "Buy", "Auto Buy / Spawn Units", "Silent buy and spawn")
+
+			local qi = pq.Section("Live Status")
+			Refs.qBase   = AddInfo(qi, "My base", "Not set")
+			Refs.qPairs  = AddInfo(qi, "Pairs ready", "0")
+			Refs.qMerges = AddInfo(qi, "Merges done", "0")
+			Refs.qClicks = AddInfo(qi, "Silent clicks", "0")
+			AddText(qi, "Ligue e ande livremente: o merge acontece sozinho, sem teleporte. Rebirth e Upgrade clicam por trás, sem abrir nada na tela. Dica: faça 1 merge à mão com o Auto Merge ligado e o script aprende o comando real (fica ainda mais rápido e certeiro).")
 		end
 
 		-- ---------- MERGE ----------
@@ -2528,6 +2723,7 @@ RegisterGame({
 				if on then
 					ensureButtonTracking()
 					ensureBase()
+					if cfg.AutoLearn and not learned then startLearning(600, true) end
 				end
 				if on and not (firesignal or getconnections or VIM) then
 					ctx.Notify("AFK Mode", "Executor can't click UI buttons", 4)
@@ -2541,15 +2737,11 @@ RegisterGame({
 			AddToggle(afk, "AFK Disable 3D Rendering", "Black screen, minimum CPU/GPU", false, function(on) ctx.SetNoRender(on) end)
 
 			local am = pm.Section("Auto Merge")
-			ctl.Merge = AddToggle(am, "Auto Merge (Intelligent)", "Finds equal units in YOUR base and merges them", false, function(on)
-				cfg.Merge = on
-				if on then ensureBase() end
-			end)
 			AddSlider(am, "Merge delay", 0.03, 1.5, cfg.MergeDelay, 0.01, "s", function(v) cfg.MergeDelay = v end)
+			AddSlider(am, "Pairs per cycle", 1, 6, cfg.Batch, 1, "", function(v) cfg.Batch = v end)
 			AddButton(am, "Merge Now", function()
 				if ensureBase() then mergeOnce = true else ctx.Notify("Merge", "Set your base first", 3) end
 			end)
-			AddToggle(am, "Return to start position", "Goes back to where you were after merging", true, function(on) cfg.Return = on end)
 			Refs.mUnits  = AddInfo(am, "Units in my base", "0")
 			Refs.mPairs  = AddInfo(am, "Pairs found", "0")
 			Refs.mMerges = AddInfo(am, "Merges done", "0")
@@ -2570,41 +2762,20 @@ RegisterGame({
 				cfg.BaseRadius = v
 				if base.center and not base.model then base.radius = v end
 			end)
-			AddText(mb, "Fique no centro da sua base e toque em Set Base Here se a detecção automática não achar. Só unidades dentro dessa área são mescladas.")
+			AddText(mb, "Fique no centro da sua base e toque em Set Base Here se a detecção automática não achar. Só unidades dentro dessa área são mescladas. Depois disso você pode andar para onde quiser.")
 
 			local mm = pm.Section("Method")
-			AddToggle(mm, "Walk over units", "Teleports onto each unit and triggers touch", true, function(on) cfg.Walk = on end)
-			AddToggle(mm, "Drag unit onto target", "Experimental: moves unit A onto unit B", false, function(on) cfg.Drag = on end)
 			AddToggle(mm, "Use learned remote", "Fastest: replays the real merge call", true, function(on) cfg.UseRemote = on end)
+			AddToggle(mm, "Auto-learn remote", "Learns it when you merge by hand once", true, function(on) cfg.AutoLearn = on end)
 			Refs.mRemote = AddInfo(mm, "Learned remote", learned and learned.remote and learned.remote.Name or "None")
-			AddButton(mm, "Learn Merge Remote", function()
-				if not installHook() then
-					ctx.Notify("Learn", "Executor lacks hookmetamethod. Walk mode still works", 5)
-					return
-				end
-				if not ensureBase() then return end
-				captured, recording = nil, true
-				env.__ShadowHookFn = onRemote
-				ctx.Notify("Learning", "Merge two units BY HAND now (20s)", 6)
-				task.spawn(function()
-					local t0 = os.clock()
-					while recording and not captured and os.clock() - t0 < 20 do task.wait(0.25) end
-					recording = false
-					if captured then
-						learned = captured
-						env.__ShadowMiniLearn = learned
-						Refs.mRemote.Text = learned.remote.Name
-						ctx.Notify("Learned", learned.remote.Name .. (learned.direct and " (direct)" or " (targets)"), 4)
-					else
-						ctx.Notify("Learn", "Nothing captured. Try again", 4)
-					end
-				end)
-			end)
+			AddButton(mm, "Learn Merge Remote", function() startLearning(20, false) end)
 			AddButton(mm, "Forget learned remote", function()
 				learned = nil
 				env.__ShadowMiniLearn = nil
 				Refs.mRemote.Text = "None"
 			end)
+			AddToggle(mm, "Teleport fallback", "Only if a pair fails 3x. Goes there and returns", false, function(on) cfg.Walk = on end)
+			AddToggle(mm, "Drag unit onto target", "Experimental: moves unit A onto unit B", false, function(on) cfg.Drag = on end)
 			AddInput(mm, "Unit names (optional)", "ex: soldier, tank", "", function(text)
 				cfg.UnitWords = splitWords(text)
 				scan.t = 0
@@ -2620,10 +2791,6 @@ RegisterGame({
 		local pe = ctx.Page("Economy", ctx.Icons.Economy)
 		do
 			local up = pe.Section("Auto Buy Upgrades")
-			ctl.Upgrade = AddToggle(up, "Auto Buy Upgrades", "Clicks upgrade buttons", false, function(on)
-				cfg.Upgrade = on
-				if on then ensureButtonTracking() end
-			end)
 			AddInput(up, "Only these upgrades", "ex: spawn level, max", "", function(text)
 				cfg.UpgradeWords = splitWords(text)
 				ctx.Notify("Upgrades", #cfg.UpgradeWords > 0 and (#cfg.UpgradeWords .. " filter(s)") or "All upgrades", 2)
@@ -2632,17 +2799,16 @@ RegisterGame({
 			AddButton(up, "Upgrade Now", function() clickNow("Upgrade") end)
 
 			local rb = pe.Section("Auto Rebirth")
-			ctl.Rebirth = AddToggle(rb, "Auto Rebirth", "Careful: resets your progress", false, function(on)
-				cfg.Rebirth = on
-				if on then ensureButtonTracking() end
-			end)
 			AddSlider(rb, "Rebirth delay", 1, 300, cfg.RebirthEvery, 1, "s", function(v) cfg.RebirthEvery = v end)
 			AddButton(rb, "Rebirth Now", function() clickNow("Rebirth") end)
-			AddText(rb, "Depois do clique em Rebirth o script também confirma o diálogo (Confirm / Yes).")
+			AddText(rb, "Ligue Auto Upgrade e Auto Rebirth na aba Quick. Depois do clique em Rebirth o script também confirma o diálogo (Confirm / Yes).")
+
+			local sl = pe.Section("Silent Mode")
+			AddToggle(sl, "Silent clicks", "Works with the game menu closed", true, function(on) cfg.Silent = on end)
+			AddToggle(sl, "Mouse fallback", "Virtual mouse if no signal works (visible buttons only)", false, function(on) cfg.MouseFallback = on end)
+			AddText(sl, "No modo silencioso o script aciona os botões por trás da interface: nada abre na tela e seu mouse/dedo continua livre para andar. Deixe o Mouse fallback desligado, ele usa clique de mouse real.")
 
 			local ex = pe.Section("Extras")
-			simple(ex, "Collect", "Auto Collect / Claim", "Clicks collect and claim buttons")
-			simple(ex, "Buy", "Auto Buy / Spawn Units", "Clicks buy, spawn, summon buttons")
 			simple(ex, "Equip", "Auto Equip Best", "Clicks equip best / equip all")
 			simple(ex, "Spin", "Auto Spin", "Free spins only (Robux ones are skipped)")
 			AddSlider(ex, "Action delay", 0.2, 3, cfg.ActionDelay, 0.1, "s", function(v) cfg.ActionDelay = v end)
@@ -2756,9 +2922,9 @@ RegisterGame({
 				ensureButtonTracking()
 				local out, now = {}, os.clock()
 				for b, info in pairs(buttons) do
-					if b.Parent and isShown(b) then
+					if b.Parent then
 						refreshInfo(b, info, now)
-						table.insert(out, b:GetFullName() .. " | " .. info.text)
+						table.insert(out, (isShown(b) and "[visible] " or "[hidden] ") .. b:GetFullName() .. " | " .. info.text)
 					end
 				end
 				dump(out, "Scan Buttons")
@@ -2783,6 +2949,7 @@ RegisterGame({
 			end)
 			AddButton(dev, "Reset merge cooldowns", function()
 				cooldown = setmetatable({}, {__mode = "k"})
+				failCount = setmetatable({}, {__mode = "k"})
 				scan.t = 0
 				ctx.Notify("Merge", "Cooldowns cleared", 2)
 			end)
@@ -2794,11 +2961,16 @@ RegisterGame({
 			while running and ctx.ScreenGui.Parent do
 				task.wait(1)
 				if ctx.IsVisible() then
+					local baseText = base.center and base.label or "Not set"
 					Refs.mUnits.Text = tostring(scan.units)
 					Refs.mPairs.Text = tostring(scan.pairs)
 					Refs.mMerges.Text = tostring(stats.merges)
 					Refs.mFails.Text = tostring(stats.fails)
-					Refs.mBase.Text = base.center and base.label or "Not set"
+					Refs.mBase.Text = baseText
+					Refs.qBase.Text = baseText
+					Refs.qPairs.Text = tostring(scan.pairs)
+					Refs.qMerges.Text = tostring(stats.merges)
+					Refs.qClicks.Text = tostring(stats.clicks)
 					Refs.aStatus.Text = atk.status
 					Refs.aTarget.Text = atk.target
 					Refs.aCaps.Text = tostring(stats.captures)
@@ -2824,7 +2996,8 @@ RegisterGame({
 	end,
 })
 
--- Detecção do jogo atual (carrega só os scripts que combinam)
+-- Detecção do jogo atual: só carrega o(s) script(s) que combinam com ESTE jogo.
+-- Em qualquer outro jogo nenhuma aba de jogo é criada.
 task.spawn(function()
 	for _, def in ipairs(GameModules) do
 		if matchesGame(def, nil) then loadGame(def) end
@@ -3016,6 +3189,7 @@ do
 		isOpen = state
 		animToken = animToken + 1
 		local token = animToken
+		Sfx.Play(isOpen and "Open" or "Close")
 		if isOpen then
 			currentScale = computeScale()
 			hubCenter = clampCenter(hubCenter)
