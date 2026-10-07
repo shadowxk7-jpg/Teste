@@ -1,10 +1,29 @@
 -- ================================================================= --
---            DARK SHADOW HUB - V2.3 LUXURY EDITION + GAME SCRIPTS         --
---            (otimizado: menos lag + AFK Farm para Merge a Mini Army)     --
+--   DARK SHADOW HUB v3.0  |  LUXURY EDITION                          --
+--   + Aba dedicada: Merge a Mini Army (AFK Farm completo)            --
+--   Otimizado: cache de personagem, rastreio sob demanda, menos GC   --
+-- ================================================================= --
+--  ÍNDICE
+--   1. Serviços e ambiente
+--   2. Utilitários e tema
+--   3. Estado global
+--   4. Interface base (ScreenGui, neve, janela, sidebar)
+--   5. Framework de abas e sub-abas
+--   6. Notificações
+--   7. Componentes (toggle, slider, botão, input, info, texto)
+--   8. Busca
+--   9. Abas: Home / Player / Main / Settings
+--  10. Sistema de scripts por jogo
+--  11. Jogo: Merge a Mini Army
+--  12. Loops principais
+--  13. Abrir/fechar, arraste, unload, inicialização
 -- ================================================================= --
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
+-- ==========================================
+-- 1. SERVIÇOS E AMBIENTE
+-- ==========================================
 local TweenService       = game:GetService("TweenService")
 local UserInputService   = game:GetService("UserInputService")
 local RunService         = game:GetService("RunService")
@@ -14,6 +33,7 @@ local TeleportService    = game:GetService("TeleportService")
 local HttpService        = game:GetService("HttpService")
 local Lighting           = game:GetService("Lighting")
 local VirtualUser        = game:GetService("VirtualUser")
+local GuiService         = game:GetService("GuiService")
 local Stats              = game:GetService("Stats")
 
 local LocalPlayer = Players.LocalPlayer
@@ -25,7 +45,7 @@ if env.__ShadowHubUnload then pcall(env.__ShadowHubUnload) end
 if ParentGui:FindFirstChild("ShadowTechHub") then ParentGui.ShadowTechHub:Destroy() end
 
 -- ==========================================
--- UTILITÁRIOS
+-- 2. UTILITÁRIOS E TEMA
 -- ==========================================
 local connections = {}
 local function track(conn)
@@ -97,19 +117,27 @@ local function nextOrder(obj)
 	return orderCounters[obj]
 end
 
+-- Cache do personagem (evita FindFirstChild a cada frame)
+local cHum, cRoot
 local function getHum()
 	local c = LocalPlayer.Character
-	return c and c:FindFirstChildOfClass("Humanoid")
+	if not c then return nil end
+	if cHum and cHum.Parent == c then return cHum end
+	cHum = c:FindFirstChildOfClass("Humanoid")
+	return cHum
 end
 
 local function getRoot()
 	local c = LocalPlayer.Character
-	return c and c:FindFirstChild("HumanoidRootPart")
+	if not c then return nil end
+	if cRoot and cRoot.Parent == c then return cRoot end
+	cRoot = c:FindFirstChild("HumanoidRootPart")
+	return cRoot
 end
 
-local clipboardFn = (setclipboard) or (toclipboard) or nil
+local clipboardFn = setclipboard or toclipboard or nil
 
--- ICONES (sem emojis) - troque os IDs se algum não carregar
+-- ICONES (troque os IDs se algum não carregar)
 local ICONS = {
 	Logo     = "rbxassetid://10723415903",
 	Home     = "rbxassetid://10723354417",
@@ -125,7 +153,7 @@ local ICONS = {
 }
 
 -- ==========================================
--- ESTADO
+-- 3. ESTADO GLOBAL
 -- ==========================================
 local isOpen = false
 local userScale = 1
@@ -133,7 +161,7 @@ local currentScale = 1
 local toggleKey = Enum.KeyCode.RightShift
 local listeningKey = false
 local notificationsEnabled = true
-local activeTab, activeSub = "Home", "Visuals"
+local activeTab = "Home"
 
 local State = {
 	Speed = 50, SpeedOn = false,
@@ -143,6 +171,7 @@ local State = {
 	Fullbright = false, NoFog = false,
 	FovOn = false, Fov = 70,
 	AntiAfk = false, LowGfx = false,
+	NoRender = false, AutoRejoin = false,
 	Snow = true,
 }
 local Original = {}
@@ -160,7 +189,7 @@ pcall(function()
 end)
 
 -- ==========================================
--- SCREENGUI
+-- 4. INTERFACE BASE
 -- ==========================================
 local ScreenGui = create("ScreenGui", {
 	Name = "ShadowTechHub",
@@ -176,16 +205,14 @@ local InputBlocker = create("TextButton", {
 	Text = "", Visible = false, Modal = true, ZIndex = 1, Parent = ScreenGui,
 })
 
--- ==========================================
--- NEVE (POOL ÚNICO, 30 FPS, SÓ COM O MENU ABERTO)
--- ==========================================
+-- Neve (pool único, 24 FPS, só com o menu aberto)
 local SnowContainer = create("Frame", {
 	Name = "SnowContainer", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
 	ClipsDescendants = true, Visible = false, ZIndex = 1, Parent = ScreenGui,
 })
 
 local flakes = {}
-for i = 1, 40 do
+for i = 1, 28 do
 	local size = math.random(3, 7)
 	local frame = create("Frame", {
 		Size = UDim2.fromOffset(size, size),
@@ -216,12 +243,10 @@ local function updateSnow(dt)
 	end
 end
 
--- ==========================================
--- BOTÃO FLUTUANTE
--- ==========================================
+-- Botão flutuante
 local FloatingBtn = create("Frame", {
 	Name = "FloatingButton", Size = UDim2.fromOffset(48, 48),
-	Position = UDim2.new(0, 24, 0.25, 0), AnchorPoint = Vector2.new(0, 0),
+	Position = UDim2.new(0, 24, 0.25, 0),
 	BackgroundColor3 = COLORS.Sidebar, BorderSizePixel = 0, Active = true,
 	ZIndex = 10, Parent = ScreenGui,
 })
@@ -233,9 +258,7 @@ create("ImageLabel", {
 	Image = ICONS.Logo, ImageColor3 = COLORS.Accent, Parent = FloatingBtn,
 })
 
--- ==========================================
--- JANELA PRINCIPAL (CanvasGroup => fade suave)
--- ==========================================
+-- Janela principal (CanvasGroup => fade suave)
 local HUB_W, HUB_H = 680, 430
 local hubCenter = Vector2.new(0, 0)
 
@@ -273,9 +296,7 @@ local function computeScale()
 	return math.max(0.4, fit) * userScale
 end
 
--- ==========================================
--- SIDEBAR
--- ==========================================
+-- Sidebar
 local Sidebar = create("Frame", {
 	Size = UDim2.new(0, 150, 1, 0), BackgroundColor3 = COLORS.Sidebar,
 	BorderSizePixel = 0, Active = true, Parent = MainFrame,
@@ -293,11 +314,11 @@ create("ImageLabel", {
 })
 label({Size = UDim2.new(1, -54, 0, 16), Position = UDim2.new(0, 52, 0.5, -15), Text = "DARK SHADOW",
 	Font = Enum.Font.GothamBlack, TextSize = 12, Parent = LogoHeader})
-label({Size = UDim2.new(1, -54, 0, 12), Position = UDim2.new(0, 52, 0.5, 2), Text = "HUB  v2.3",
+label({Size = UDim2.new(1, -54, 0, 12), Position = UDim2.new(0, 52, 0.5, 2), Text = "HUB  v3.0",
 	TextSize = 10, TextColor3 = COLORS.Accent, Parent = LogoHeader})
 
 local TabsContainer = create("Frame", {
-	Size = UDim2.new(1, -16, 0, 200), Position = UDim2.new(0, 8, 0, 66),
+	Size = UDim2.new(1, -16, 0, 270), Position = UDim2.new(0, 8, 0, 66),
 	BackgroundTransparency = 1, Parent = Sidebar,
 })
 create("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 6), Parent = TabsContainer})
@@ -326,21 +347,7 @@ label({Size = UDim2.new(1, -46, 0, 16), Position = UDim2.new(0, 44, 0, 8), Text 
 label({Size = UDim2.new(1, -46, 0, 14), Position = UDim2.new(0, 44, 0, 24), Text = "@" .. LocalPlayer.Name,
 	TextSize = 10, TextColor3 = COLORS.TextDark, TextTruncate = Enum.TextTruncate.AtEnd, Parent = ProfileCard})
 
-local cachedAvatar = nil
-task.spawn(function()
-	local ok, img = pcall(function()
-		return (Players:GetUserThumbnailAsync(LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100))
-	end)
-	if ok and img then
-		cachedAvatar = img
-		AvatarImg.Image = img
-		if env.__ShadowHomeAvatar then env.__ShadowHomeAvatar(img) end
-	end
-end)
-
--- ==========================================
--- CONTEÚDO E HEADER
--- ==========================================
+-- Conteúdo e header
 local ContentArea = create("Frame", {
 	Size = UDim2.new(1, -150, 1, 0), Position = UDim2.new(0, 150, 0, 0),
 	BackgroundTransparency = 1, Parent = MainFrame,
@@ -400,9 +407,10 @@ local NoResults = label({
 })
 
 -- ==========================================
--- ABAS
+-- 5. FRAMEWORK DE ABAS E SUB-ABAS
 -- ==========================================
-local tabs = {}
+local tabs = {}     -- abas da sidebar
+local groups = {}   -- grupos de sub-abas por aba
 
 local function createScroll(parent)
 	local s = create("ScrollingFrame", {
@@ -432,10 +440,10 @@ local function setActiveTab(name)
 	HeaderIcon.Image = tabs[name].IconId
 end
 
-local function createTab(name, iconId, useScroll)
+local function createTab(name, iconId, useScroll, order)
 	local btn = create("TextButton", {
 		Size = UDim2.new(1, 0, 0, 38), BackgroundColor3 = COLORS.SubTabBg, BackgroundTransparency = 1,
-		Text = "", AutoButtonColor = false, LayoutOrder = nextOrder(TabsContainer), Parent = TabsContainer,
+		Text = "", AutoButtonColor = false, LayoutOrder = order or nextOrder(TabsContainer), Parent = TabsContainer,
 	})
 	corner(btn, 8)
 	local line = create("Frame", {
@@ -462,58 +470,68 @@ local function createTab(name, iconId, useScroll)
 	return content
 end
 
-local HomeScroll     = createTab("Home", ICONS.Home, true)
-local PlayerScroll   = createTab("Player", ICONS.Player, true)
-local MainPage       = createTab("Main", ICONS.Main, false)
-local SettingsScroll = createTab("Settings", ICONS.Settings, true)
+-- Grupo de sub-abas dentro de uma aba (Main, Mini Army, ...)
+local function createSubGroup(tabName, page)
+	local bar = create("Frame", {Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1, Parent = page})
+	create("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder,
+		Padding = UDim.new(0, 8), Parent = bar})
+	local holder = create("Frame", {
+		Size = UDim2.new(1, 0, 1, -42), Position = UDim2.new(0, 0, 0, 42), BackgroundTransparency = 1, Parent = page,
+	})
 
--- Sub-abas da Main
-local SubTabsBar = create("Frame", {Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1, Parent = MainPage})
-create("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder,
-	Padding = UDim.new(0, 8), Parent = SubTabsBar})
-local SubPagesContainer = create("Frame", {
-	Size = UDim2.new(1, 0, 1, -42), Position = UDim2.new(0, 0, 0, 42), BackgroundTransparency = 1, Parent = MainPage,
-})
+	local group = {Subs = {}, Active = nil}
 
-local subTabs = {}
-
-local function setActiveSub(name)
-	if not subTabs[name] then return end
-	activeSub = name
-	for n, s in pairs(subTabs) do
-		local on = (n == name)
-		s.Page.Visible = on
-		tween(s.Btn, 0.2, {BackgroundColor3 = on and COLORS.SubTabActive or COLORS.SubTabBg})
-		tween(s.Icon, 0.2, {ImageColor3 = on and COLORS.Accent or COLORS.TextDark})
-		tween(s.Label, 0.2, {TextColor3 = on and COLORS.TextMain or COLORS.TextDark})
+	function group.Set(name)
+		if not group.Subs[name] then return end
+		group.Active = name
+		for n, s in pairs(group.Subs) do
+			local on = (n == name)
+			s.Page.Visible = on
+			tween(s.Btn, 0.2, {BackgroundColor3 = on and COLORS.SubTabActive or COLORS.SubTabBg})
+			tween(s.Icon, 0.2, {ImageColor3 = on and COLORS.Accent or COLORS.TextDark})
+			tween(s.Label, 0.2, {TextColor3 = on and COLORS.TextMain or COLORS.TextDark})
+		end
 	end
+
+	function group.Add(name, iconId)
+		local btn = create("TextButton", {
+			Size = UDim2.fromOffset(104, 34), BackgroundColor3 = COLORS.SubTabBg, Text = "",
+			AutoButtonColor = false, LayoutOrder = nextOrder(bar), Parent = bar,
+		})
+		corner(btn, 8)
+		local icon = create("ImageLabel", {
+			Size = UDim2.fromOffset(14, 14), Position = UDim2.new(0, 10, 0.5, -7),
+			BackgroundTransparency = 1, Image = iconId, ImageColor3 = COLORS.TextDark, Parent = btn,
+		})
+		local lbl = label({Size = UDim2.new(1, -30, 1, 0), Position = UDim2.new(0, 30, 0, 0), Text = name,
+			TextSize = 11, TextColor3 = COLORS.TextDark, Parent = btn})
+		local holderPage = create("Frame", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false, Parent = holder})
+		local scroll = createScroll(holderPage)
+		group.Subs[name] = {Btn = btn, Page = holderPage, Icon = icon, Label = lbl}
+		btn.MouseButton1Click:Connect(function() group.Set(name) end)
+		if not group.Active then group.Set(name) end
+		return scroll
+	end
+
+	groups[tabName] = group
+	return group
 end
 
-local function createSubTab(name, iconId)
-	local btn = create("TextButton", {
-		Size = UDim2.fromOffset(100, 34), BackgroundColor3 = COLORS.SubTabBg, Text = "",
-		AutoButtonColor = false, LayoutOrder = nextOrder(SubTabsBar), Parent = SubTabsBar,
-	})
-	corner(btn, 8)
-	local icon = create("ImageLabel", {
-		Size = UDim2.fromOffset(14, 14), Position = UDim2.new(0, 10, 0.5, -7),
-		BackgroundTransparency = 1, Image = iconId, ImageColor3 = COLORS.TextDark, Parent = btn,
-	})
-	local lbl = label({Size = UDim2.new(1, -30, 1, 0), Position = UDim2.new(0, 30, 0, 0), Text = name,
-		TextSize = 11, TextColor3 = COLORS.TextDark, Parent = btn})
-	local pageHolder = create("Frame", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false, Parent = SubPagesContainer})
-	local scroll = createScroll(pageHolder)
-	subTabs[name] = {Btn = btn, Page = pageHolder, Icon = icon, Label = lbl}
-	btn.MouseButton1Click:Connect(function() setActiveSub(name) end)
-	return scroll
-end
+-- Ordem das abas na sidebar
+local ORDER = {Home = 10, Player = 20, Main = 30, Game = 40, Settings = 100}
 
-local VisualsScroll = createSubTab("Visuals", ICONS.Merge)
-local UtilityScroll = createSubTab("Utility", ICONS.Shield)
-local ServerScroll  = createSubTab("Server", ICONS.Server)
+local HomeScroll     = createTab("Home", ICONS.Home, true, ORDER.Home)
+local PlayerScroll   = createTab("Player", ICONS.Player, true, ORDER.Player)
+local MainPage       = createTab("Main", ICONS.Main, false, ORDER.Main)
+local SettingsScroll = createTab("Settings", ICONS.Settings, true, ORDER.Settings)
+
+local MainGroup     = createSubGroup("Main", MainPage)
+local VisualsScroll = MainGroup.Add("Visuals", ICONS.Merge)
+local UtilityScroll = MainGroup.Add("Utility", ICONS.Shield)
+local ServerScroll  = MainGroup.Add("Server", ICONS.Server)
 
 -- ==========================================
--- NOTIFICAÇÕES
+-- 6. NOTIFICAÇÕES
 -- ==========================================
 local NotifHolder = create("Frame", {
 	Name = "Notifications", Size = UDim2.new(0, 250, 1, -20), Position = UDim2.new(1, -262, 0, 10),
@@ -527,7 +545,7 @@ create("UIListLayout", {
 local activeNotifs = 0
 local function Notify(title, text, duration)
 	if not notificationsEnabled then return end
-	if activeNotifs >= 4 then return end -- evita acúmulo de notificações (lag)
+	if activeNotifs >= 4 then return end -- evita acúmulo (lag)
 	activeNotifs = activeNotifs + 1
 	duration = duration or 2.5
 	local wrapper = create("Frame", {
@@ -560,7 +578,7 @@ local function Notify(title, text, duration)
 end
 
 -- ==========================================
--- COMPONENTES + REGISTRO DE BUSCA
+-- 7. COMPONENTES (+ registro para a busca)
 -- ==========================================
 local sections = {}
 
@@ -614,7 +632,7 @@ local function AddToggle(sec, title, desc, default, callback)
 	})
 	corner(knob, 8)
 
-	local state = default
+	local state = default and true or false
 	local control = {}
 	function control.Set(newState, silent)
 		state = newState and true or false
@@ -730,6 +748,32 @@ local function AddButton(sec, title, callback, danger)
 	return btn
 end
 
+-- Campo de texto (confirma ao sair do campo / Enter)
+local function AddInput(sec, title, placeholder, default, callback)
+	local row = create("Frame", {Size = UDim2.new(1, 0, 0, 38), BackgroundTransparency = 1,
+		LayoutOrder = nextOrder(sec.Frame), Parent = sec.Frame})
+	label({Size = UDim2.new(1, -190, 1, 0), Position = UDim2.new(0, 14, 0, 0), Text = title, Parent = row})
+	local boxFrame = create("Frame", {
+		Size = UDim2.fromOffset(160, 26), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0),
+		BackgroundColor3 = COLORS.CardHeader, Parent = row,
+	})
+	corner(boxFrame, 6)
+	local bs = stroke(boxFrame, COLORS.Stroke, 1)
+	local box = create("TextBox", {
+		Size = UDim2.new(1, -12, 1, 0), Position = UDim2.new(0, 6, 0, 0), BackgroundTransparency = 1,
+		Text = default or "", PlaceholderText = placeholder or "", PlaceholderColor3 = COLORS.TextDark,
+		TextColor3 = COLORS.TextMain, TextSize = 11, Font = Enum.Font.GothamMedium,
+		TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, ClipsDescendants = true, Parent = boxFrame,
+	})
+	box.Focused:Connect(function() tween(bs, 0.2, {Color = COLORS.Accent}) end)
+	box.FocusLost:Connect(function()
+		tween(bs, 0.2, {Color = COLORS.Stroke})
+		safeCall(callback, box.Text)
+	end)
+	registerRow(sec, row, title)
+	return box
+end
+
 local function AddInfo(sec, title, value)
 	local row = create("Frame", {Size = UDim2.new(1, 0, 0, 26), BackgroundTransparency = 1,
 		LayoutOrder = nextOrder(sec.Frame), Parent = sec.Frame})
@@ -751,7 +795,7 @@ local function AddText(sec, text)
 end
 
 -- ==========================================
--- BUSCA (filtra e navega até o resultado) - com debounce
+-- 8. BUSCA (com debounce; navega até o resultado)
 -- ==========================================
 local searchToken = 0
 local function applySearch()
@@ -770,14 +814,17 @@ local function applySearch()
 		if q ~= "" and any then
 			anyMatch = true
 			firstMatchSec = firstMatchSec or sec
-			if sec.Tab == activeTab and (sec.Sub == nil or sec.Sub == activeSub) then currentHasMatch = true end
+			if sec.Tab == activeTab then
+				local g = groups[sec.Tab]
+				if sec.Sub == nil or (g and g.Active == sec.Sub) then currentHasMatch = true end
+			end
 		end
 	end
 
 	NoResults.Visible = (q ~= "" and not anyMatch)
 	if q ~= "" and firstMatchSec and not currentHasMatch then
 		setActiveTab(firstMatchSec.Tab)
-		if firstMatchSec.Sub then setActiveSub(firstMatchSec.Sub) end
+		if firstMatchSec.Sub and groups[firstMatchSec.Tab] then groups[firstMatchSec.Tab].Set(firstMatchSec.Sub) end
 	end
 end
 SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
@@ -789,8 +836,10 @@ SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
 end)
 
 -- ==========================================
--- ABA HOME
+-- 9. ABAS PRINCIPAIS
 -- ==========================================
+
+-- ---------- 9.1 HOME ----------
 local WelcomeCard = create("Frame", {
 	Size = UDim2.new(1, -8, 0, 72), BackgroundColor3 = COLORS.Card, BorderSizePixel = 0,
 	LayoutOrder = nextOrder(HomeScroll), Parent = HomeScroll,
@@ -799,16 +848,25 @@ corner(WelcomeCard, 12)
 stroke(WelcomeCard, COLORS.Stroke, 1)
 local HomeAvatar = create("ImageLabel", {
 	Size = UDim2.fromOffset(48, 48), Position = UDim2.new(0, 14, 0.5, -24),
-	BackgroundColor3 = COLORS.CardHeader, Image = cachedAvatar or "", Parent = WelcomeCard,
+	BackgroundColor3 = COLORS.CardHeader, Image = "", Parent = WelcomeCard,
 })
 corner(HomeAvatar, 24)
 stroke(HomeAvatar, COLORS.Accent, 1.5, 0.2)
-env.__ShadowHomeAvatar = function(img) HomeAvatar.Image = img end
 label({Size = UDim2.new(1, -90, 0, 14), Position = UDim2.new(0, 74, 0, 14), Text = "Welcome back,",
 	TextSize = 11, TextColor3 = COLORS.TextDark, Parent = WelcomeCard})
 label({Size = UDim2.new(1, -90, 0, 20), Position = UDim2.new(0, 74, 0, 32),
 	Text = LocalPlayer.DisplayName .. " (@" .. LocalPlayer.Name .. ")", Font = Enum.Font.GothamBold,
 	TextSize = 14, TextTruncate = Enum.TextTruncate.AtEnd, Parent = WelcomeCard})
+
+task.spawn(function()
+	local ok, img = pcall(function()
+		return (Players:GetUserThumbnailAsync(LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100))
+	end)
+	if ok and img then
+		AvatarImg.Image = img
+		HomeAvatar.Image = img
+	end
+end)
 
 local StatsGrid = create("Frame", {
 	Size = UDim2.new(1, -8, 0, 54), BackgroundTransparency = 1,
@@ -839,17 +897,15 @@ AddInfo(GameSec, "Place ID", tostring(game.PlaceId))
 local AgeVal = AddInfo(GameSec, "Server age", "--")
 local GameScriptVal = AddInfo(GameSec, "Game script", "None for this game")
 
-task.spawn(function()
-	local ok, info = pcall(function() return MarketplaceService:GetProductInfo(game.PlaceId) end)
-	GameNameVal.Text = (ok and info and info.Name) or "Unknown"
-end)
+local loadGameByName -- forward declaration (seção 10)
+local ScriptsSec = AddSection(HomeScroll, "Game Scripts")
+AddText(ScriptsSec, "Scripts de jogo carregam sozinhos quando você entra num jogo suportado. Se a detecção falhar, force manualmente:")
+AddButton(ScriptsSec, "Load: Merge a Mini Army", function() loadGameByName("Merge a Mini Army") end)
 
 local AboutSec = AddSection(HomeScroll, "About")
-AddText(AboutSec, "Dark Shadow Hub v2.3\nGame scripts load automatically when you join a supported game. Toggle the menu with the floating button or your keybind (default: Right Shift). Drag the sidebar or header to move the window.")
+AddText(AboutSec, "Dark Shadow Hub v3.0\nAbra/feche o menu pelo botão flutuante ou pela tecla (padrão: Right Shift). Arraste a sidebar ou o cabeçalho para mover a janela.")
 
--- ==========================================
--- FUNÇÕES: PLAYER
--- ==========================================
+-- ---------- 9.2 PLAYER ----------
 local function restoreSpeed()
 	local hum = getHum()
 	if hum and Original.Speed then hum.WalkSpeed = Original.Speed end
@@ -943,8 +999,7 @@ AddToggle(MoveSec, "Noclip", "Walk through walls", false, function(on)
 end)
 
 local FlySec = AddSection(PlayerScroll, "Fly", "Player")
-local flyToggle
-flyToggle = AddToggle(FlySec, "Fly", "Space / Ctrl = up / down. Mobile: look direction", false, function(on)
+AddToggle(FlySec, "Fly", "Space / Ctrl = up / down. Mobile: look direction", false, function(on)
 	State.Fly = on
 	if on then startFly() else stopFly() end
 end)
@@ -964,9 +1019,7 @@ AddButton(CharSec, "Copy Position", function()
 	else Notify("Position", text, 4) end
 end)
 
--- ==========================================
--- FUNÇÕES: VISUALS
--- ==========================================
+-- ---------- 9.3 MAIN > VISUALS ----------
 local fbOrig, fogOrig
 local function restoreFullbright()
 	if fbOrig then
@@ -1022,12 +1075,9 @@ AddSlider(CamSec, "Max Zoom Distance", 10, 1000, math.clamp(math.floor(origMaxZo
 	LocalPlayer.CameraMaxZoomDistance = v
 end)
 
--- ==========================================
--- FUNÇÕES: UTILITY
--- ==========================================
-local afkConn
-local lowGfxOrig
-local antiAfkToggle, lowGfxToggle
+-- ---------- 9.4 MAIN > UTILITY ----------
+local afkConn, rejoinConn, lowGfxOrig
+local antiAfkToggle, lowGfxToggle, noRenderToggle
 
 local function setAntiAfk(on)
 	State.AntiAfk = on
@@ -1046,6 +1096,14 @@ local function setAntiAfk(on)
 	end
 end
 
+local function restoreLowGfx()
+	if lowGfxOrig then
+		if lowGfxOrig.Quality then pcall(function() settings().Rendering.QualityLevel = lowGfxOrig.Quality end) end
+		if lowGfxOrig.Decoration ~= nil then pcall(function() workspace.Terrain.Decoration = lowGfxOrig.Decoration end) end
+		lowGfxOrig = nil
+	end
+end
+
 local function setLowGfx(on)
 	State.LowGfx = on
 	if on then
@@ -1056,23 +1114,46 @@ local function setLowGfx(on)
 		end
 		pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
 		pcall(function() workspace.Terrain.Decoration = false end)
-	elseif lowGfxOrig then
-		if lowGfxOrig.Quality then pcall(function() settings().Rendering.QualityLevel = lowGfxOrig.Quality end) end
-		if lowGfxOrig.Decoration ~= nil then pcall(function() workspace.Terrain.Decoration = lowGfxOrig.Decoration end) end
-		lowGfxOrig = nil
+	else
+		restoreLowGfx()
+	end
+end
+
+local function setNoRender(on)
+	State.NoRender = on
+	pcall(function() RunService:Set3dRenderingEnabled(not on) end)
+end
+
+local rejoining = false
+local function setAutoRejoin(on)
+	State.AutoRejoin = on
+	if on then
+		if not rejoinConn then
+			rejoinConn = GuiService.ErrorMessageChanged:Connect(function(msg)
+				if State.AutoRejoin and not rejoining and msg and msg ~= "" then
+					rejoining = true
+					task.wait(3)
+					pcall(function() TeleportService:Teleport(game.PlaceId, LocalPlayer) end)
+					task.delay(10, function() rejoining = false end)
+				end
+			end)
+		end
+	elseif rejoinConn then
+		rejoinConn:Disconnect()
+		rejoinConn = nil
 	end
 end
 
 local UtilSec = AddSection(UtilityScroll, "Utility", "Main", "Utility")
-antiAfkToggle = AddToggle(UtilSec, "Anti-AFK", "Prevents the idle kick", false, setAntiAfk)
-lowGfxToggle = AddToggle(UtilSec, "Low Graphics", "Lower quality level for more FPS", false, setLowGfx)
+antiAfkToggle  = AddToggle(UtilSec, "Anti-AFK", "Prevents the idle kick", false, setAntiAfk)
+lowGfxToggle   = AddToggle(UtilSec, "Low Graphics", "Lower quality level for more FPS", false, setLowGfx)
+noRenderToggle = AddToggle(UtilSec, "Disable 3D Rendering", "Black screen, huge FPS/CPU saving while AFK", false, setNoRender)
+AddToggle(UtilSec, "Auto Rejoin", "Rejoins automatically if you get disconnected", false, setAutoRejoin)
 if setfpscap then
 	AddSlider(UtilSec, "FPS Cap", 30, 240, 60, 5, "", function(v) pcall(setfpscap, v) end)
 end
 
--- ==========================================
--- FUNÇÕES: SERVER
--- ==========================================
+-- ---------- 9.5 MAIN > SERVER ----------
 local function copyText(text, name)
 	if clipboardFn then
 		clipboardFn(text)
@@ -1139,31 +1220,27 @@ AddButton(SrvActions, "Copy Place ID", function() copyText(tostring(game.PlaceId
 AddButton(SrvActions, "Rejoin Server", rejoin)
 AddButton(SrvActions, "Server Hop", serverHop)
 
--- ==========================================
--- SETTINGS
--- ==========================================
+-- ---------- 9.6 SETTINGS ----------
 local UnloadHub -- forward declaration
+local keyBtnRef
 
 local UISec = AddSection(SettingsScroll, "Interface", "Settings")
-
--- Keybind
 do
 	local row = create("Frame", {Size = UDim2.new(1, 0, 0, 38), BackgroundTransparency = 1,
 		LayoutOrder = nextOrder(UISec.Frame), Parent = UISec.Frame})
 	label({Size = UDim2.new(1, -130, 1, 0), Position = UDim2.new(0, 14, 0, 0), Text = "Menu Keybind", Parent = row})
-	local keyBtn = create("TextButton", {
+	keyBtnRef = create("TextButton", {
 		Size = UDim2.fromOffset(96, 26), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0),
 		BackgroundColor3 = COLORS.CardHeader, Text = toggleKey.Name, TextColor3 = COLORS.TextMain, TextSize = 11,
 		Font = Enum.Font.GothamBold, AutoButtonColor = false, Parent = row,
 	})
-	corner(keyBtn, 6)
-	stroke(keyBtn, COLORS.Stroke, 1)
-	keyBtn.MouseButton1Click:Connect(function()
+	corner(keyBtnRef, 6)
+	stroke(keyBtnRef, COLORS.Stroke, 1)
+	keyBtnRef.MouseButton1Click:Connect(function()
 		listeningKey = true
-		keyBtn.Text = "Press a key..."
-		tween(keyBtn, 0.15, {BackgroundColor3 = COLORS.AccentDark})
+		keyBtnRef.Text = "Press a key..."
+		tween(keyBtnRef, 0.15, {BackgroundColor3 = COLORS.AccentDark})
 	end)
-	env.__ShadowKeyBtn = keyBtn
 	registerRow(UISec, row, "Menu Keybind")
 end
 
@@ -1183,11 +1260,10 @@ end)
 local DangerSec = AddSection(SettingsScroll, "Danger Zone", "Settings")
 AddButton(DangerSec, "Unload Hub", function() UnloadHub() end, true)
 
-
 -- ================================================================= --
---                SISTEMA DE SCRIPTS POR JOGO (MAIN)                  --
---  Cada script de jogo só carrega e só aparece no jogo dele.         --
---  Para adicionar um jogo novo: copie um bloco RegisterGame({...}).  --
+-- 10. SISTEMA DE SCRIPTS POR JOGO
+--  Cada jogo vira uma ABA própria na sidebar (só no jogo dele).
+--  Para adicionar outro jogo: copie o bloco RegisterGame({...}).
 -- ================================================================= --
 local cleanupFns = {}
 local GameModules = {}
@@ -1196,17 +1272,22 @@ local function RegisterGame(def)
 	table.insert(GameModules, def)
 end
 
-local function buildGameContext(def, page)
+local function buildGameContext(def, group)
 	return {
-		Page = page,
-		Section = function(title) return AddSection(page, title, "Main", def.TabName) end,
+		-- cria uma sub-aba e devolve um objeto com :Section(titulo)
+		Page = function(name, icon)
+			local scroll = group.Add(name, icon or ICONS.Merge)
+			return {Section = function(title) return AddSection(scroll, title, def.TabName, name) end}
+		end,
 		AddToggle = AddToggle, AddSlider = AddSlider, AddButton = AddButton,
-		AddInfo = AddInfo, AddText = AddText,
+		AddInput = AddInput, AddInfo = AddInfo, AddText = AddText,
 		Notify = Notify, track = track, safeCall = safeCall,
 		getRoot = getRoot, getHum = getHum, copy = clipboardFn,
-		ScreenGui = ScreenGui,
+		ScreenGui = ScreenGui, Icons = ICONS,
+		IsVisible = function() return isOpen and tabs[def.TabName] ~= nil and tabs[def.TabName].Active end,
 		SetAntiAfk = function(on) setAntiAfk(on); antiAfkToggle.Set(on, true) end,
 		SetLowGfx = function(on) setLowGfx(on); lowGfxToggle.Set(on, true) end,
+		SetNoRender = function(on) setNoRender(on); noRenderToggle.Set(on, true) end,
 		OnUnload = function(fn) table.insert(cleanupFns, fn) end,
 	}
 end
@@ -1226,10 +1307,11 @@ end
 
 local loadedGames = {}
 local function loadGame(def)
-	if loadedGames[def.Name] or not ScreenGui.Parent then return end
+	if loadedGames[def.Name] or not ScreenGui.Parent then return false end
 	loadedGames[def.Name] = true
-	local page = createSubTab(def.TabName, def.Icon or ICONS.Merge)
-	local ok, err = pcall(def.Build, buildGameContext(def, page))
+	local page = createTab(def.TabName, def.Icon or ICONS.Merge, false, ORDER.Game)
+	local group = createSubGroup(def.TabName, page)
+	local ok, err = pcall(def.Build, buildGameContext(def, group))
 	if ok then
 		GameScriptVal.Text = def.Name
 		Notify("Game Script", def.Name .. " loaded", 3)
@@ -1238,72 +1320,115 @@ local function loadGame(def)
 		GameScriptVal.Text = def.Name .. " (error)"
 		Notify("Game Script", "Failed to load " .. def.Name, 4)
 	end
+	return ok
 end
 
--- ------------------------------------------------------------------
--- JOGO: MERGE A MINI ARMY  (só aparece quando você está nesse jogo)
--- ------------------------------------------------------------------
+loadGameByName = function(name)
+	for _, def in ipairs(GameModules) do
+		if def.Name == name then
+			if loadedGames[name] then
+				Notify("Game Script", name .. " is already loaded", 2.5)
+				setActiveTab(def.TabName)
+			elseif loadGame(def) then
+				setActiveTab(def.TabName)
+			end
+			return
+		end
+	end
+end
+
+-- ================================================================= --
+-- 11. JOGO: MERGE A MINI ARMY
+--  Auto Merge / Buy / Collect / Upgrade / Spin / Equip / Rebirth,
+--  Auto Capture de territórios, modo AFK e ferramentas de diagnóstico.
+--  Funciona detectando e acionando os botões da interface do jogo.
+-- ================================================================= --
 RegisterGame({
 	Name = "Merge a Mini Army",
 	TabName = "Mini Army",
 	Icon = ICONS.Merge,
-	PlaceIds = {},                       -- opcional: coloque o PlaceId aqui para detecção exata
-	NameMatch = "merge a mini army",     -- detecção pelo nome do jogo
+	PlaceIds = {},                       -- opcional: coloque o PlaceId para detecção exata
+	NameMatch = "merge a mini army",
 	Build = function(ctx)
-		local KEYWORDS = {"captur", "conquer", "garrison", "compound", "airbase", "territor"}
-		local prompts, originalHold = {}, {}
-		local territoryCache = setmetatable({}, {__mode = "k"})
-		local cfg = {
-			AutoCapture = false, Range = 25, Instant = false, Delay = 0.6,
-			Merge = false, Buy = false, Collect = false, Upgrade = false, Rebirth = false,
-		}
-		local running = true
-		local clicks = 0
-		local ctl = {}
 		local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
-		-- ---------- Auto clicker de botões da interface ----------
+		-- ---------- Configuração ----------
+		local cfg = {
+			Merge = false, Buy = false, Collect = false, Upgrade = false,
+			Spin = false, Equip = false, Battle = false, Rebirth = false, Custom = false,
+			Delay = 0.6, RebirthEvery = 20, CustomWords = {},
+			AutoCapture = false, Range = 25, Instant = false,
+			AfkRebirth = false,
+		}
+		local running = true
+		local stats = {clicks = 0, rebirths = 0}
+		local ctl = {}
+
+		-- Categorias de botões (palavras buscadas no texto/nome do botão)
 		local CATS = {
-			{key = "Merge",   words = {"merge"}},
-			{key = "Buy",     words = {"buy", "spawn", "summon", "recruit", "hire", "deploy"}},
+			{key = "Merge",   words = {"merge", "combine"}, boostOk = true},
+			{key = "Rebirth", words = {"rebirth"}, boostOk = true},
+			{key = "Equip",   words = {"equip best", "equip all", "best units"}},
 			{key = "Collect", words = {"collect", "claim"}},
 			{key = "Upgrade", words = {"upgrade"}},
-			{key = "Rebirth", words = {"rebirth"}},
+			{key = "Spin",    words = {"spin"}},
+			{key = "Battle",  words = {"start battle", "next wave", "next stage", "start wave", "fight"}},
+			{key = "Buy",     words = {"buy", "spawn", "summon", "recruit", "hire", "deploy"}},
 		}
-		-- Nunca clica em botões ligados a Robux / gamepass
-		local BLOCK = {"robux", "r$", "gamepass", "game pass", "premium", "vip", "gift", "donat", "x2", "2x", "x3", "3x"}
-
-		local buttons = {}
-		local function trackButton(d)
-			if (d:IsA("TextButton") or d:IsA("ImageButton")) and not d:IsDescendantOf(ctx.ScreenGui) then
-				buttons[d] = true
-			end
-		end
-
-		task.spawn(function()
-			local i = 0
-			for _, d in ipairs(PlayerGui:GetDescendants()) do
-				trackButton(d)
-				i = i + 1
-				if i % 300 == 0 then task.wait() end
-			end
-		end)
-		ctx.track(PlayerGui.DescendantAdded:Connect(trackButton))
-		ctx.track(PlayerGui.DescendantRemoving:Connect(function(d) buttons[d] = nil end))
-
-		local function buttonText(b)
-			local t = b:IsA("TextButton") and b.Text or ""
-			for _, c in ipairs(b:GetDescendants()) do
-				if c:IsA("TextLabel") or c:IsA("TextButton") then t = t .. " " .. c.Text end
-			end
-			return string.lower(t .. " " .. b.Name)
-		end
+		-- Nunca clica em nada ligado a Robux / gamepass / presentes
+		local BLOCK_HARD = {"robux", "r$", "gamepass", "game pass", "premium", "gift", "donat", "purchase", "vip"}
+		-- Boosts (x2, 2x...) só passam em Merge/Rebirth
+		local BOOST = {"x2", "2x", "x3", "3x", "x4", "4x"}
+		local CONFIRM = {"confirm", "yes"}
 
 		local function hasAny(text, words)
 			for _, w in ipairs(words) do
 				if string.find(text, w, 1, true) then return true end
 			end
 			return false
+		end
+
+		-- ---------- Rastreio de botões (sob demanda) ----------
+		local buttons = {}
+		local trackingButtons = false
+
+		local function addButton(d)
+			if (d:IsA("TextButton") or d:IsA("ImageButton")) and not d:IsDescendantOf(ctx.ScreenGui) then
+				buttons[d] = {text = nil, t = 0}
+			end
+		end
+
+		local function ensureButtonTracking()
+			if trackingButtons then return end
+			trackingButtons = true
+			task.spawn(function()
+				local i = 0
+				for _, d in ipairs(PlayerGui:GetDescendants()) do
+					addButton(d)
+					i = i + 1
+					if i % 300 == 0 then task.wait() end
+				end
+			end)
+			ctx.track(PlayerGui.DescendantAdded:Connect(addButton))
+			ctx.track(PlayerGui.DescendantRemoving:Connect(function(d) buttons[d] = nil end))
+		end
+
+		-- Texto/categoria em cache (recalcula a cada 2s, não a cada ciclo)
+		local function refreshInfo(b, info, now)
+			if info.text and now - info.t < 2 then return end
+			local t = b:IsA("TextButton") and b.Text or ""
+			for _, c in ipairs(b:GetDescendants()) do
+				if c:IsA("TextLabel") or c:IsA("TextButton") then t = t .. " " .. c.Text end
+			end
+			t = string.lower(t .. " " .. b.Name)
+			info.text, info.t = t, now
+			info.block = hasAny(t, BLOCK_HARD)
+			info.boost = hasAny(t, BOOST)
+			info.confirm = hasAny(t, CONFIRM)
+			info.cat = nil
+			for _, cat in ipairs(CATS) do
+				if hasAny(t, cat.words) then info.cat = cat break end
+			end
 		end
 
 		local function isShown(b)
@@ -1317,49 +1442,96 @@ RegisterGame({
 			return b.AbsoluteSize.X > 0 and b.AbsoluteSize.Y > 0
 		end
 
-		local function clickButton(b)
-			local ok = false
-			if firesignal then
-				if pcall(firesignal, b.MouseButton1Click) then ok = true end
-				pcall(firesignal, b.Activated)
-			end
-			if not ok and getconnections then
-				for _, sig in ipairs({b.MouseButton1Click, b.Activated}) do
-					pcall(function()
-						for _, c in ipairs(getconnections(sig)) do c:Fire() end
-					end)
+		-- Dispara os eventos do botão SEM duplicar o clique
+		local function fireSignal(sig)
+			if getconnections then
+				local ok, conns = pcall(getconnections, sig)
+				if ok and conns and #conns > 0 then
+					for _, c in ipairs(conns) do pcall(function() c:Fire() end) end
+					return true
 				end
-				ok = true
 			end
-			return ok
+			return false
 		end
+
+		local function clickButton(b)
+			if fireSignal(b.MouseButton1Click) then return true end
+			if fireSignal(b.Activated) then return true end
+			if firesignal then
+				if pcall(firesignal, b.MouseButton1Click) then return true end
+				if pcall(firesignal, b.Activated) then return true end
+			end
+			return false
+		end
+
+		local AUTO_KEYS = {"Merge", "Buy", "Collect", "Upgrade", "Spin", "Equip", "Battle", "Rebirth", "Custom"}
+		local function anyAutoOn()
+			for _, k in ipairs(AUTO_KEYS) do
+				if cfg[k] then return true end
+			end
+			return false
+		end
+
+		local lastRebirth, confirmUntil = 0, 0
 
 		task.spawn(function()
 			while running and ctx.ScreenGui.Parent do
 				task.wait(cfg.Delay)
-				if cfg.Merge or cfg.Buy or cfg.Collect or cfg.Upgrade or cfg.Rebirth then
+				if anyAutoOn() then
+					ensureButtonTracking()
+					local now = os.clock()
 					local list = {}
 					for b in pairs(buttons) do list[#list + 1] = b end
+
 					for i = 1, #list do
 						local b = list[i]
-						if b.Parent and isShown(b) then
-							local text = buttonText(b)
-							if not hasAny(text, BLOCK) then
-								for _, cat in ipairs(CATS) do
-									if cfg[cat.key] and hasAny(text, cat.words) then
-										if clickButton(b) then clicks = clicks + 1 end
-										break
+						local info = buttons[b]
+						if info and b.Parent then
+							refreshInfo(b, info, now)
+							if not info.block then
+								local doClick = false
+								local isRebirth = false
+								local cat = info.cat
+
+								if cat and cfg[cat.key] and (not info.boost or cat.boostOk) then
+									if cat.key == "Rebirth" then
+										if now - lastRebirth >= cfg.RebirthEvery then doClick, isRebirth = true, true end
+									else
+										doClick = true
+									end
+								end
+								if not doClick and cfg.Custom and #cfg.CustomWords > 0 and hasAny(info.text, cfg.CustomWords) then
+									doClick = true
+								end
+								-- Confirma o diálogo logo depois de um rebirth
+								if not doClick and cfg.Rebirth and now < confirmUntil and info.confirm then
+									doClick = true
+								end
+
+								if doClick and isShown(b) then
+									if clickButton(b) then
+										stats.clicks = stats.clicks + 1
+										if isRebirth then
+											stats.rebirths = stats.rebirths + 1
+											lastRebirth = now
+											confirmUntil = now + 4
+										end
 									end
 								end
 							end
 						end
-						if i % 50 == 0 then task.wait() end
+						if i % 60 == 0 then task.wait() end
 					end
 				end
 			end
 		end)
 
-		-- ---------- Territórios (ProximityPrompts) ----------
+		-- ---------- Territórios (ProximityPrompts, sob demanda) ----------
+		local KEYWORDS = {"captur", "conquer", "garrison", "compound", "airbase", "territor"}
+		local prompts, originalHold = {}, {}
+		local territoryCache = setmetatable({}, {__mode = "k"})
+		local trackingPrompts = false
+
 		local function promptPos(p)
 			local par = p.Parent
 			if not par then return nil end
@@ -1375,10 +1547,7 @@ RegisterGame({
 			local par = p.Parent
 			if not par then return false end
 			local text = string.lower(p.ActionText .. " " .. p.ObjectText .. " " .. par.Name .. " " .. (par.Parent and par.Parent.Name or ""))
-			local result = false
-			for _, k in ipairs(KEYWORDS) do
-				if string.find(text, k, 1, true) then result = true break end
-			end
+			local result = hasAny(text, KEYWORDS)
 			territoryCache[p] = result
 			return result
 		end
@@ -1397,26 +1566,29 @@ RegisterGame({
 			originalHold = {}
 		end
 
-		task.spawn(function()
-			local i = 0
-			for _, d in ipairs(workspace:GetDescendants()) do
-				if d:IsA("ProximityPrompt") then
-					prompts[d] = true
-					if cfg.Instant then applyInstant(d) end
-				end
-				i = i + 1
-				if i % 400 == 0 then task.wait() end
-			end
-		end)
-		ctx.track(workspace.DescendantAdded:Connect(function(d)
+		local function addPrompt(d)
 			if d:IsA("ProximityPrompt") then
 				prompts[d] = true
 				if cfg.Instant then applyInstant(d) end
 			end
-		end))
-		ctx.track(workspace.DescendantRemoving:Connect(function(d)
-			if prompts[d] then prompts[d] = nil; originalHold[d] = nil; territoryCache[d] = nil end
-		end))
+		end
+
+		local function ensurePromptTracking()
+			if trackingPrompts then return end
+			trackingPrompts = true
+			task.spawn(function()
+				local i = 0
+				for _, d in ipairs(workspace:GetDescendants()) do
+					addPrompt(d)
+					i = i + 1
+					if i % 400 == 0 then task.wait() end
+				end
+			end)
+			ctx.track(workspace.DescendantAdded:Connect(addPrompt))
+			ctx.track(workspace.DescendantRemoving:Connect(function(d)
+				if prompts[d] then prompts[d] = nil; originalHold[d] = nil; territoryCache[d] = nil end
+			end))
+		end
 
 		local function nearestTerritory(minDist)
 			local root = ctx.getRoot()
@@ -1434,37 +1606,80 @@ RegisterGame({
 			return best
 		end
 
-		-- ---------- UI: AFK ----------
-		local afkSec = ctx.Section("AFK Mode")
-		ctx.AddToggle(afkSec, "AFK Farm Mode", "Anti-AFK + auto merge, buy, collect, upgrade, capture", false, function(on)
+		task.spawn(function()
+			while running and ctx.ScreenGui.Parent do
+				task.wait(0.5)
+				if cfg.AutoCapture and fireproximityprompt then
+					local root = ctx.getRoot()
+					if root then
+						local rpos = root.Position
+						for p in pairs(prompts) do
+							if p.Parent and p.Enabled and isTerritory(p) then
+								local pos = promptPos(p)
+								if pos and (pos - rpos).Magnitude <= cfg.Range then
+									pcall(fireproximityprompt, p)
+								end
+							end
+						end
+					end
+				end
+			end
+		end)
+
+		-- ================= UI: sub-aba AUTO FARM =================
+		local farm = ctx.Page("Auto Farm", ctx.Icons.Merge)
+
+		local afkSec = farm.Section("AFK Mode")
+		local AFK_KEYS = {"Merge", "Buy", "Collect", "Upgrade", "Spin", "Equip"}
+		ctl.AFK = ctx.AddToggle(afkSec, "AFK Farm Mode", "Anti-AFK + auto merge, buy, collect, upgrade, capture", false, function(on)
 			ctx.SetAntiAfk(on)
-			for _, key in ipairs({"Merge", "Buy", "Collect", "Upgrade"}) do
+			for _, key in ipairs(AFK_KEYS) do
 				cfg[key] = on
 				ctl[key].Set(on, true)
 			end
+			cfg.Rebirth = on and cfg.AfkRebirth
+			ctl.Rebirth.Set(cfg.Rebirth, true)
 			local cap = on and fireproximityprompt ~= nil
 			cfg.AutoCapture = cap
 			ctl.AutoCapture.Set(cap, true)
+			if cap then ensurePromptTracking() end
+			if on then ensureButtonTracking() end
 			if on and not (firesignal or getconnections) then
 				ctx.Notify("AFK Mode", "Executor can't click UI buttons", 4)
 			end
 		end)
-		ctx.AddToggle(afkSec, "AFK Low Graphics", "Reduces FPS usage while idle", false, function(on)
-			ctx.SetLowGfx(on)
+		ctx.AddToggle(afkSec, "AFK includes Rebirth", "Also auto rebirths while AFK Mode is on", false, function(on)
+			cfg.AfkRebirth = on
+			if ctl.AFK.Get() then
+				cfg.Rebirth = on
+				ctl.Rebirth.Set(on, true)
+			end
 		end)
+		ctx.AddToggle(afkSec, "AFK Low Graphics", "Reduces FPS usage while idle", false, function(on) ctx.SetLowGfx(on) end)
+		ctx.AddToggle(afkSec, "AFK Disable 3D Rendering", "Black screen, minimum CPU/GPU usage", false, function(on) ctx.SetNoRender(on) end)
 
-		-- ---------- UI: Automação ----------
-		local autoSec = ctx.Section("Automation")
-		ctl.Merge = ctx.AddToggle(autoSec, "Auto Merge", "Clicks the Merge button when it is visible", false, function(on) cfg.Merge = on end)
-		ctl.Buy = ctx.AddToggle(autoSec, "Auto Buy / Spawn Units", "Clicks buy / spawn / summon buttons", false, function(on) cfg.Buy = on end)
-		ctl.Collect = ctx.AddToggle(autoSec, "Auto Collect / Claim", "Clicks collect and claim buttons", false, function(on) cfg.Collect = on end)
-		ctl.Upgrade = ctx.AddToggle(autoSec, "Auto Upgrade", "Clicks upgrade buttons", false, function(on) cfg.Upgrade = on end)
-		ctl.Rebirth = ctx.AddToggle(autoSec, "Auto Rebirth", "Careful: resets progress", false, function(on) cfg.Rebirth = on end)
+		local autoSec = farm.Section("Automation")
+		ctl.Merge   = ctx.AddToggle(autoSec, "Auto Merge", "Clicks the Merge button when it is visible", false, function(on) cfg.Merge = on; if on then ensureButtonTracking() end end)
+		ctl.Buy     = ctx.AddToggle(autoSec, "Auto Buy / Spawn Units", "Clicks buy / spawn / summon buttons", false, function(on) cfg.Buy = on; if on then ensureButtonTracking() end end)
+		ctl.Collect = ctx.AddToggle(autoSec, "Auto Collect / Claim", "Clicks collect and claim buttons", false, function(on) cfg.Collect = on; if on then ensureButtonTracking() end end)
+		ctl.Upgrade = ctx.AddToggle(autoSec, "Auto Upgrade", "Clicks upgrade buttons", false, function(on) cfg.Upgrade = on; if on then ensureButtonTracking() end end)
+		ctl.Spin    = ctx.AddToggle(autoSec, "Auto Spin", "Clicks free spin buttons (Robux ones are skipped)", false, function(on) cfg.Spin = on; if on then ensureButtonTracking() end end)
+		ctl.Equip   = ctx.AddToggle(autoSec, "Auto Equip Best", "Clicks equip best / equip all buttons", false, function(on) cfg.Equip = on; if on then ensureButtonTracking() end end)
+		ctl.Battle  = ctx.AddToggle(autoSec, "Auto Start Battle / Next Wave", "Clicks start battle and next wave buttons", false, function(on) cfg.Battle = on; if on then ensureButtonTracking() end end)
 		ctx.AddSlider(autoSec, "Action Delay", 0.2, 3, cfg.Delay, 0.1, "s", function(v) cfg.Delay = v end)
-		ctx.AddText(autoSec, "Buttons tied to Robux, gamepasses or x2 boosts are always ignored.")
+		ctx.AddText(autoSec, "Botões ligados a Robux, gamepass, VIP ou presentes são sempre ignorados.")
 
-		-- ---------- UI: Territórios ----------
-		local capSec = ctx.Section("Territories")
+		local rebSec = farm.Section("Rebirth")
+		ctl.Rebirth = ctx.AddToggle(rebSec, "Auto Rebirth", "Careful: resets your progress", false, function(on)
+			cfg.Rebirth = on
+			if on then ensureButtonTracking() end
+		end)
+		ctx.AddSlider(rebSec, "Rebirth Cooldown", 5, 300, cfg.RebirthEvery, 5, "s", function(v) cfg.RebirthEvery = v end)
+		ctx.AddText(rebSec, "O cooldown evita rebirth em sequência. Após clicar em Rebirth o script também confirma o diálogo (Confirm / Yes).")
+
+		-- ================= UI: sub-aba TERRITORIES =================
+		local terr = ctx.Page("Territories", ctx.Icons.Combat)
+		local capSec = terr.Section("Capture")
 		ctl.AutoCapture = ctx.AddToggle(capSec, "Auto Capture", "Triggers capture prompts of nearby territories", false, function(on)
 			if on and not fireproximityprompt then
 				ctx.Notify("Auto Capture", "Your executor lacks fireproximityprompt", 4)
@@ -1472,17 +1687,20 @@ RegisterGame({
 				return
 			end
 			cfg.AutoCapture = on
+			if on then ensurePromptTracking() end
 		end)
 		ctx.AddSlider(capSec, "Capture Range", 5, 60, cfg.Range, 1, " st", function(v) cfg.Range = v end)
 		ctx.AddToggle(capSec, "Instant Interact", "Removes the hold time on prompts", false, function(on)
 			cfg.Instant = on
 			if on then
+				ensurePromptTracking()
 				for p in pairs(prompts) do applyInstant(p) end
 			else
 				restoreInstant()
 			end
 		end)
 		ctx.AddButton(capSec, "Teleport to Next Territory", function()
+			ensurePromptTracking()
 			local root = ctx.getRoot()
 			local pos = nearestTerritory(15)
 			if not root then ctx.Notify("Teleport", "Character not found", 2) return end
@@ -1491,30 +1709,54 @@ RegisterGame({
 			ctx.Notify("Teleport", "Moved to the nearest territory", 2)
 		end)
 
-		-- ---------- UI: Status ----------
-		local infoSec = ctx.Section("Status")
-		local clicksVal = ctx.AddInfo(infoSec, "Buttons clicked", "0")
-		local trackedVal = ctx.AddInfo(infoSec, "Prompts tracked", "0")
-		local nearVal = ctx.AddInfo(infoSec, "Territories in range", "0")
+		-- ================= UI: sub-aba TOOLS =================
+		local tools = ctx.Page("Tools", ctx.Icons.Shield)
 
-		-- ---------- UI: Ferramentas ----------
-		local devSec = ctx.Section("Developer Tools")
-		ctx.AddButton(devSec, "Scan Buttons", function()
-			local out = {}
-			for b in pairs(buttons) do
-				if b.Parent and isShown(b) then
-					table.insert(out, string.format("%s | text: %s", b:GetFullName(), buttonText(b)))
-				end
+		local customSec = tools.Section("Custom Click")
+		ctx.AddToggle(customSec, "Custom Auto Click", "Clicks any button containing your keywords", false, function(on)
+			cfg.Custom = on
+			if on then ensureButtonTracking() end
+		end)
+		ctx.AddInput(customSec, "Keywords", "ex: claim, daily", "", function(text)
+			local words = {}
+			for w in string.gmatch(string.lower(text), "[^,]+") do
+				w = w:gsub("^%s*(.-)%s*$", "%1")
+				if #w > 0 then words[#words + 1] = w end
 			end
+			cfg.CustomWords = words
+			ctx.Notify("Custom Click", #words .. " keyword(s) set", 2)
+		end)
+		ctx.AddText(customSec, "Separe palavras por vírgula. Útil se o jogo usar nomes diferentes nos botões.")
+
+		local infoSec = tools.Section("Status")
+		local clicksVal  = ctx.AddInfo(infoSec, "Buttons clicked", "0")
+		local rebirthVal = ctx.AddInfo(infoSec, "Rebirth clicks", "0")
+		local btnVal     = ctx.AddInfo(infoSec, "Buttons tracked", "0")
+		local trackedVal = ctx.AddInfo(infoSec, "Prompts tracked", "0")
+		local nearVal    = ctx.AddInfo(infoSec, "Territories in range", "0")
+
+		local devSec = tools.Section("Developer Tools")
+		local function dump(out, name)
 			table.sort(out)
 			local text = table.concat(out, "\n")
 			if ctx.copy then
 				ctx.copy(text)
-				ctx.Notify("Scan Buttons", #out .. " visible buttons copied", 3)
+				ctx.Notify(name, #out .. " entries copied", 3)
 			else
 				print(text)
-				ctx.Notify("Scan Buttons", #out .. " buttons printed in the console", 3)
+				ctx.Notify(name, #out .. " entries printed in the console", 3)
 			end
+		end
+		ctx.AddButton(devSec, "Scan Buttons", function()
+			ensureButtonTracking()
+			local out, now = {}, os.clock()
+			for b, info in pairs(buttons) do
+				if b.Parent and isShown(b) then
+					refreshInfo(b, info, now)
+					table.insert(out, string.format("%s | %s", b:GetFullName(), info.text))
+				end
+			end
+			dump(out, "Scan Buttons")
 		end)
 		ctx.AddButton(devSec, "Scan Remotes", function()
 			local out = {}
@@ -1523,45 +1765,17 @@ RegisterGame({
 					table.insert(out, d.ClassName .. ": " .. d:GetFullName())
 				end
 			end
-			table.sort(out)
-			local text = table.concat(out, "\n")
-			if ctx.copy then
-				ctx.copy(text)
-				ctx.Notify("Scan Remotes", #out .. " remotes copied", 3)
-			else
-				print(text)
-				ctx.Notify("Scan Remotes", #out .. " remotes printed in the console", 3)
-			end
+			dump(out, "Scan Remotes")
 		end)
-		ctx.AddText(devSec, "If an auto feature does not click, open the game menu so the button is visible, run Scan Buttons and send me the list to tune the keywords.")
+		ctx.AddText(devSec, "Se algum auto não clicar: abra o menu do jogo (botão visível), rode Scan Buttons e ajuste as palavras em Custom Click.")
 
-		-- ---------- Loop (captura + status) ----------
-		local acc, statAcc = 0, 0
-		ctx.track(RunService.Heartbeat:Connect(function(dt)
-			acc = acc + dt
-			statAcc = statAcc + dt
-			if acc < 0.5 and statAcc < 1 then return end
-			local root = ctx.getRoot()
-
-			if acc >= 0.5 then
-				acc = 0
-				if cfg.AutoCapture and root and fireproximityprompt then
-					local rpos = root.Position
-					for p in pairs(prompts) do
-						if p.Parent and p.Enabled and isTerritory(p) then
-							local pos = promptPos(p)
-							if pos and (pos - rpos).Magnitude <= cfg.Range then
-								pcall(fireproximityprompt, p)
-							end
-						end
-					end
-				end
-			end
-
-			if statAcc >= 1 then
-				statAcc = 0
-				if isOpen then
+		-- Atualiza o status 1x/s, só com a aba visível
+		task.spawn(function()
+			while running and ctx.ScreenGui.Parent do
+				task.wait(1)
+				if ctx.IsVisible() then
 					local total, near = 0, 0
+					local root = ctx.getRoot()
 					for p in pairs(prompts) do
 						total = total + 1
 						if root and p.Parent and isTerritory(p) then
@@ -1569,41 +1783,42 @@ RegisterGame({
 							if pos and (pos - root.Position).Magnitude <= cfg.Range then near = near + 1 end
 						end
 					end
+					local bc = 0
+					for _ in pairs(buttons) do bc = bc + 1 end
+					clicksVal.Text = tostring(stats.clicks)
+					rebirthVal.Text = tostring(stats.rebirths)
+					btnVal.Text = tostring(bc)
 					trackedVal.Text = tostring(total)
 					nearVal.Text = tostring(near)
-					clicksVal.Text = tostring(clicks)
 				end
 			end
-		end))
+		end)
 
 		ctx.OnUnload(function()
 			running = false
+			for _, k in ipairs(AUTO_KEYS) do cfg[k] = false end
 			cfg.AutoCapture = false
-			cfg.Merge, cfg.Buy, cfg.Collect, cfg.Upgrade, cfg.Rebirth = false, false, false, false, false
 			restoreInstant()
 		end)
 	end,
 })
 
--- ------------------------------------------------------------------
--- DETECÇÃO DO JOGO ATUAL (carrega só os scripts que combinam)
--- ------------------------------------------------------------------
+-- Detecção do jogo atual (carrega só os scripts que combinam)
 task.spawn(function()
-	-- 1) Por PlaceId/GameId (instantâneo)
 	for _, def in ipairs(GameModules) do
 		if matchesGame(def, nil) then loadGame(def) end
 	end
-	-- 2) Pelo nome do jogo
 	local ok, info = pcall(function() return MarketplaceService:GetProductInfo(game.PlaceId) end)
 	local gameName = ok and info and info.Name or nil
+	GameNameVal.Text = gameName or "Unknown"
 	for _, def in ipairs(GameModules) do
 		if matchesGame(def, gameName) then loadGame(def) end
 	end
 end)
 
--- ==========================================
--- LOOPS PRINCIPAIS
--- ==========================================
+-- ================================================================= --
+-- 12. LOOPS PRINCIPAIS
+-- ================================================================= --
 track(UserInputService.JumpRequest:Connect(function()
 	if State.InfJump then
 		local hum = getHum()
@@ -1611,7 +1826,7 @@ track(UserInputService.JumpRequest:Connect(function()
 	end
 end))
 
--- Noclip: usa lista em cache (antes varria GetDescendants todo frame)
+-- Noclip: lista em cache (não varre GetDescendants todo frame)
 track(RunService.Stepped:Connect(function()
 	if not State.Noclip then return end
 	local now = os.clock()
@@ -1629,47 +1844,51 @@ track(RunService.Stepped:Connect(function()
 end))
 
 track(RunService.Heartbeat:Connect(function(dt)
-	local hum = getHum()
-	if hum then
-		if State.SpeedOn then
-			if Original.Speed == nil then Original.Speed = hum.WalkSpeed end
-			if hum.WalkSpeed ~= State.Speed then hum.WalkSpeed = State.Speed end
-		end
-		if State.JumpOn then
-			if Original.Jump == nil then
-				Original.JumpIsPower = hum.UseJumpPower
-				Original.Jump = hum.UseJumpPower and hum.JumpPower or hum.JumpHeight
+	if State.SpeedOn or State.JumpOn then
+		local hum = getHum()
+		if hum then
+			if State.SpeedOn then
+				if Original.Speed == nil then Original.Speed = hum.WalkSpeed end
+				if hum.WalkSpeed ~= State.Speed then hum.WalkSpeed = State.Speed end
 			end
-			if hum.UseJumpPower then
-				if hum.JumpPower ~= State.Jump then hum.JumpPower = State.Jump end
-			else
-				local target = (State.Jump * State.Jump) / (2 * workspace.Gravity)
-				if hum.JumpHeight ~= target then hum.JumpHeight = target end
+			if State.JumpOn then
+				if Original.Jump == nil then
+					Original.JumpIsPower = hum.UseJumpPower
+					Original.Jump = hum.UseJumpPower and hum.JumpPower or hum.JumpHeight
+				end
+				if hum.UseJumpPower then
+					if hum.JumpPower ~= State.Jump then hum.JumpPower = State.Jump end
+				else
+					local target = (State.Jump * State.Jump) / (2 * workspace.Gravity)
+					if hum.JumpHeight ~= target then hum.JumpHeight = target end
+				end
 			end
 		end
 	end
 
 	-- Fly
-	if State.Fly and flyObjs and flyObjs.bv and flyObjs.bv.Parent then
-		local cam = workspace.CurrentCamera
-		local root = getRoot()
-		if cam and root then
-			local mv = getMoveVector()
-			local dir = cam.CFrame.RightVector * mv.X - cam.CFrame.LookVector * mv.Z
-			if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.yAxis end
-			if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
-				dir = dir - Vector3.yAxis
+	if State.Fly then
+		if flyObjs and flyObjs.bv and flyObjs.bv.Parent then
+			local cam = workspace.CurrentCamera
+			local root = getRoot()
+			if cam and root then
+				local mv = getMoveVector()
+				local dir = cam.CFrame.RightVector * mv.X - cam.CFrame.LookVector * mv.Z
+				if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.yAxis end
+				if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+					dir = dir - Vector3.yAxis
+				end
+				if dir.Magnitude > 1 then dir = dir.Unit end
+				flyVelocity = flyVelocity:Lerp(dir * State.FlySpeed, 1 - math.exp(-12 * dt))
+				flyObjs.bv.Velocity = flyVelocity
+				local flat = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
+				if flat.Magnitude > 0.01 then
+					flyObjs.bg.CFrame = CFrame.lookAt(root.Position, root.Position + flat)
+				end
 			end
-			if dir.Magnitude > 1 then dir = dir.Unit end
-			flyVelocity = flyVelocity:Lerp(dir * State.FlySpeed, 1 - math.exp(-12 * dt))
-			flyObjs.bv.Velocity = flyVelocity
-			local flat = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
-			if flat.Magnitude > 0.01 then
-				flyObjs.bg.CFrame = CFrame.lookAt(root.Position, root.Position + flat)
-			end
+		elseif not flyObjs then
+			startFly()
 		end
-	elseif State.Fly and not flyObjs then
-		startFly()
 	end
 
 	-- Lighting (só escreve quando o valor mudou)
@@ -1698,10 +1917,10 @@ track(RunService.RenderStepped:Connect(function(dt)
 		if cam and cam.FieldOfView ~= State.Fov then cam.FieldOfView = State.Fov end
 	end
 
-	-- Neve a ~30 FPS, só com menu aberto
+	-- Neve a ~24 FPS, só com menu aberto
 	if isOpen and State.Snow then
 		snowAcc = snowAcc + dt
-		if snowAcc >= 1 / 30 then
+		if snowAcc >= 1 / 24 then
 			updateSnow(snowAcc)
 			snowAcc = 0
 		end
@@ -1737,6 +1956,7 @@ track(RunService.RenderStepped:Connect(function(dt)
 end))
 
 track(LocalPlayer.CharacterAdded:Connect(function(char)
+	cHum, cRoot = nil, nil
 	Original.Speed, Original.Jump = nil, nil
 	noclipTouched = {}
 	table.clear(noclipParts)
@@ -1753,9 +1973,9 @@ track(LocalPlayer.CharacterAdded:Connect(function(char)
 	end
 end))
 
--- ==========================================
--- ABRIR / FECHAR
--- ==========================================
+-- ================================================================= --
+-- 13. ABRIR/FECHAR, ARRASTE, UNLOAD E INICIALIZAÇÃO
+-- ================================================================= --
 local animToken = 0
 
 local function setOpen(state)
@@ -1803,12 +2023,9 @@ end))
 track(UserInputService.InputBegan:Connect(function(input, gp)
 	if listeningKey and input.UserInputType == Enum.UserInputType.Keyboard then
 		listeningKey = false
-		local keyBtn = env.__ShadowKeyBtn
 		if input.KeyCode ~= Enum.KeyCode.Escape then toggleKey = input.KeyCode end
-		if keyBtn then
-			keyBtn.Text = toggleKey.Name
-			tween(keyBtn, 0.15, {BackgroundColor3 = COLORS.CardHeader})
-		end
+		keyBtnRef.Text = toggleKey.Name
+		tween(keyBtnRef, 0.15, {BackgroundColor3 = COLORS.CardHeader})
 		Notify("Keybind", "Menu key: " .. toggleKey.Name, 2)
 		return
 	end
@@ -1817,9 +2034,7 @@ track(UserInputService.InputBegan:Connect(function(input, gp)
 	end
 end))
 
--- ==========================================
--- ARRASTE
--- ==========================================
+-- Arraste
 local function makeDrag(handle, onStart, onMove, onEnd)
 	local active, dragInput, startPos = false, nil, Vector2.zero
 	handle.InputBegan:Connect(function(input)
@@ -1842,7 +2057,7 @@ local function makeDrag(handle, onStart, onMove, onEnd)
 	end))
 end
 
--- Hub (ghost dragger)
+-- Hub (arrasta um "fantasma" e só move a janela ao soltar = sem lag)
 local hubMoved, hubStartCenter, ghostCenter = false, hubCenter, hubCenter
 local function attachHubDrag(handle)
 	makeDrag(handle,
@@ -1899,9 +2114,7 @@ makeDrag(FloatingBtn,
 	end
 )
 
--- ==========================================
--- UNLOAD
--- ==========================================
+-- Unload
 UnloadHub = function()
 	for _, fn in ipairs(cleanupFns) do pcall(fn) end
 	State.Fly = false
@@ -1911,30 +2124,20 @@ UnloadHub = function()
 	restoreNoclip()
 	restoreFullbright()
 	restoreFog()
+	restoreLowGfx()
+	pcall(function() RunService:Set3dRenderingEnabled(true) end)
 	if Original.Fov and workspace.CurrentCamera then workspace.CurrentCamera.FieldOfView = Original.Fov end
 	pcall(function() LocalPlayer.CameraMaxZoomDistance = origMaxZoom end)
 	if afkConn then afkConn:Disconnect(); afkConn = nil end
-	if lowGfxOrig then
-		if lowGfxOrig.Quality then pcall(function() settings().Rendering.QualityLevel = lowGfxOrig.Quality end) end
-		if lowGfxOrig.Decoration ~= nil then pcall(function() workspace.Terrain.Decoration = lowGfxOrig.Decoration end) end
-	end
+	if rejoinConn then rejoinConn:Disconnect(); rejoinConn = nil end
 	for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
 	connections = {}
 	env.__ShadowHubUnload = nil
-	env.__ShadowKeyBtn = nil
-	env.__ShadowHomeAvatar = nil
 	if ScreenGui then ScreenGui:Destroy() end
 end
 env.__ShadowHubUnload = UnloadHub
 
--- ==========================================
--- INICIALIZAÇÃO
--- ==========================================
-if cachedAvatar then
-	AvatarImg.Image = cachedAvatar
-	HomeAvatar.Image = cachedAvatar
-end
-
+-- Inicialização
 currentScale = computeScale()
 do
 	local s = screenSize()
@@ -1944,7 +2147,6 @@ MainFrame.Position = UDim2.fromOffset(hubCenter.X, hubCenter.Y)
 HubScale.Scale = currentScale
 
 setActiveTab("Home")
-setActiveSub("Visuals")
 
 task.delay(0.3, function()
 	setOpen(true)
