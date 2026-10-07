@@ -1,5 +1,6 @@
 -- ================================================================= --
---            DARK SHADOW HUB - V2.2 LUXURY EDITION + GAME SCRIPTS         --
+--            DARK SHADOW HUB - V2.3 LUXURY EDITION + GAME SCRIPTS         --
+--            (otimizado: menos lag + AFK Farm para Merge a Mini Army)     --
 -- ================================================================= --
 
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -142,9 +143,12 @@ local State = {
 	Fullbright = false, NoFog = false,
 	FovOn = false, Fov = 70,
 	AntiAfk = false, LowGfx = false,
+	Snow = true,
 }
 local Original = {}
 local noclipTouched = {}
+local noclipParts = {}
+local noclipRefresh = 0
 local flyObjs = nil
 local flyVelocity = Vector3.zero
 local controlsModule = nil
@@ -173,7 +177,7 @@ local InputBlocker = create("TextButton", {
 })
 
 -- ==========================================
--- NEVE (POOL ÚNICO, SEM CONEXÃO POR FLOCO)
+-- NEVE (POOL ÚNICO, 30 FPS, SÓ COM O MENU ABERTO)
 -- ==========================================
 local SnowContainer = create("Frame", {
 	Name = "SnowContainer", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
@@ -181,7 +185,7 @@ local SnowContainer = create("Frame", {
 })
 
 local flakes = {}
-for i = 1, 70 do
+for i = 1, 40 do
 	local size = math.random(3, 7)
 	local frame = create("Frame", {
 		Size = UDim2.fromOffset(size, size),
@@ -200,7 +204,8 @@ end
 
 local function updateSnow(dt)
 	local now = os.clock()
-	for _, f in ipairs(flakes) do
+	for i = 1, #flakes do
+		local f = flakes[i]
 		f.y = f.y + f.speed * dt
 		f.x = (f.x + math.sin(now * f.drift + f.seed) * 0.015 * dt) % 1
 		if f.y > 1.05 then
@@ -288,7 +293,7 @@ create("ImageLabel", {
 })
 label({Size = UDim2.new(1, -54, 0, 16), Position = UDim2.new(0, 52, 0.5, -15), Text = "DARK SHADOW",
 	Font = Enum.Font.GothamBlack, TextSize = 12, Parent = LogoHeader})
-label({Size = UDim2.new(1, -54, 0, 12), Position = UDim2.new(0, 52, 0.5, 2), Text = "HUB  v2.2",
+label({Size = UDim2.new(1, -54, 0, 12), Position = UDim2.new(0, 52, 0.5, 2), Text = "HUB  v2.3",
 	TextSize = 10, TextColor3 = COLORS.Accent, Parent = LogoHeader})
 
 local TabsContainer = create("Frame", {
@@ -519,8 +524,11 @@ create("UIListLayout", {
 	Padding = UDim.new(0, 8), Parent = NotifHolder,
 })
 
+local activeNotifs = 0
 local function Notify(title, text, duration)
 	if not notificationsEnabled then return end
+	if activeNotifs >= 4 then return end -- evita acúmulo de notificações (lag)
+	activeNotifs = activeNotifs + 1
 	duration = duration or 2.5
 	local wrapper = create("Frame", {
 		Size = UDim2.new(1, 0, 0, 50), BackgroundTransparency = 1, ZIndex = 50,
@@ -542,9 +550,11 @@ local function Notify(title, text, duration)
 
 	tween(card, 0.35, {Position = UDim2.new(0, 0, 0, 0)}, Enum.EasingStyle.Back)
 	task.delay(duration, function()
-		if not card.Parent then return end
-		tween(card, 0.3, {GroupTransparency = 1, Position = UDim2.new(0.3, 0, 0, 0)})
-		task.wait(0.32)
+		if card.Parent then
+			tween(card, 0.3, {GroupTransparency = 1, Position = UDim2.new(0.3, 0, 0, 0)})
+			task.wait(0.32)
+		end
+		activeNotifs = math.max(0, activeNotifs - 1)
 		if wrapper.Parent then wrapper:Destroy() end
 	end)
 end
@@ -590,7 +600,7 @@ local function AddToggle(sec, title, desc, default, callback)
 		Text = title, Parent = row})
 	if desc then
 		label({Size = UDim2.new(1, -84, 0, 16), Position = UDim2.new(0, 14, 0, 23), Text = desc,
-			TextSize = 10, TextColor3 = COLORS.TextDark, Parent = row})
+			TextSize = 10, TextColor3 = COLORS.TextDark, TextTruncate = Enum.TextTruncate.AtEnd, Parent = row})
 	end
 	local switch = create("TextButton", {
 		Size = UDim2.fromOffset(42, 22), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0),
@@ -741,8 +751,9 @@ local function AddText(sec, text)
 end
 
 -- ==========================================
--- BUSCA (filtra e navega até o resultado)
+-- BUSCA (filtra e navega até o resultado) - com debounce
 -- ==========================================
+local searchToken = 0
 local function applySearch()
 	local q = (string.lower(SearchBox.Text):gsub("^%s*(.-)%s*$", "%1"))
 	local firstMatchSec, currentHasMatch, anyMatch = nil, false, false
@@ -751,10 +762,11 @@ local function applySearch()
 		local any = false
 		for _, r in ipairs(sec.Rows) do
 			local match = (q == "") or (string.find(r.Title, q, 1, true) ~= nil)
-			r.Frame.Visible = match
+			if r.Frame.Visible ~= match then r.Frame.Visible = match end
 			if match then any = true end
 		end
-		sec.Frame.Visible = (q == "") or any
+		local secVisible = (q == "") or any
+		if sec.Frame.Visible ~= secVisible then sec.Frame.Visible = secVisible end
 		if q ~= "" and any then
 			anyMatch = true
 			firstMatchSec = firstMatchSec or sec
@@ -768,7 +780,13 @@ local function applySearch()
 		if firstMatchSec.Sub then setActiveSub(firstMatchSec.Sub) end
 	end
 end
-SearchBox:GetPropertyChangedSignal("Text"):Connect(applySearch)
+SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+	searchToken = searchToken + 1
+	local token = searchToken
+	task.delay(0.12, function()
+		if token == searchToken then applySearch() end
+	end)
+end)
 
 -- ==========================================
 -- ABA HOME
@@ -827,7 +845,7 @@ task.spawn(function()
 end)
 
 local AboutSec = AddSection(HomeScroll, "About")
-AddText(AboutSec, "Dark Shadow Hub v2.2\nGame scripts load automatically when you join a supported game. Toggle the menu with the floating button or your keybind (default: Right Shift). Drag the sidebar or header to move the window.")
+AddText(AboutSec, "Dark Shadow Hub v2.3\nGame scripts load automatically when you join a supported game. Toggle the menu with the floating button or your keybind (default: Right Shift). Drag the sidebar or header to move the window.")
 
 -- ==========================================
 -- FUNÇÕES: PLAYER
@@ -846,11 +864,21 @@ local function restoreJump()
 	Original.Jump = nil
 end
 
+local function rebuildNoclip()
+	table.clear(noclipParts)
+	local c = LocalPlayer.Character
+	if not c then return end
+	for _, p in ipairs(c:GetDescendants()) do
+		if p:IsA("BasePart") then noclipParts[#noclipParts + 1] = p end
+	end
+end
+
 local function restoreNoclip()
 	for part in pairs(noclipTouched) do
 		if part.Parent then part.CanCollide = true end
 	end
 	noclipTouched = {}
+	table.clear(noclipParts)
 end
 
 local function stopFly()
@@ -911,7 +939,7 @@ AddSlider(MoveSec, "JumpPower", 50, 300, State.Jump, 1, "", function(v) State.Ju
 AddToggle(MoveSec, "Infinite Jump", "Jump again while in the air", false, function(on) State.InfJump = on end)
 AddToggle(MoveSec, "Noclip", "Walk through walls", false, function(on)
 	State.Noclip = on
-	if not on then restoreNoclip() end
+	if on then rebuildNoclip() else restoreNoclip() end
 end)
 
 local FlySec = AddSection(PlayerScroll, "Fly", "Player")
@@ -999,9 +1027,9 @@ end)
 -- ==========================================
 local afkConn
 local lowGfxOrig
+local antiAfkToggle, lowGfxToggle
 
-local UtilSec = AddSection(UtilityScroll, "Utility", "Main", "Utility")
-AddToggle(UtilSec, "Anti-AFK", "Prevents the idle kick", false, function(on)
+local function setAntiAfk(on)
 	State.AntiAfk = on
 	if on then
 		if not afkConn then
@@ -1016,8 +1044,9 @@ AddToggle(UtilSec, "Anti-AFK", "Prevents the idle kick", false, function(on)
 		afkConn:Disconnect()
 		afkConn = nil
 	end
-end)
-AddToggle(UtilSec, "Low Graphics", "Lower quality level for more FPS", false, function(on)
+end
+
+local function setLowGfx(on)
 	State.LowGfx = on
 	if on then
 		if not lowGfxOrig then
@@ -1032,7 +1061,11 @@ AddToggle(UtilSec, "Low Graphics", "Lower quality level for more FPS", false, fu
 		if lowGfxOrig.Decoration ~= nil then pcall(function() workspace.Terrain.Decoration = lowGfxOrig.Decoration end) end
 		lowGfxOrig = nil
 	end
-end)
+end
+
+local UtilSec = AddSection(UtilityScroll, "Utility", "Main", "Utility")
+antiAfkToggle = AddToggle(UtilSec, "Anti-AFK", "Prevents the idle kick", false, setAntiAfk)
+lowGfxToggle = AddToggle(UtilSec, "Low Graphics", "Lower quality level for more FPS", false, setLowGfx)
 if setfpscap then
 	AddSlider(UtilSec, "FPS Cap", 30, 240, 60, 5, "", function(v) pcall(setfpscap, v) end)
 end
@@ -1142,6 +1175,10 @@ AddSlider(UISec, "UI Scale", 0.7, 1.3, 1, 0.05, "x", function(v)
 	MainFrame.Position = UDim2.fromOffset(hubCenter.X, hubCenter.Y)
 end)
 AddToggle(UISec, "Notifications", "Show pop-up messages", true, function(on) notificationsEnabled = on end)
+AddToggle(UISec, "Snow Effect", "Disable for better performance", true, function(on)
+	State.Snow = on
+	SnowContainer.Visible = on and isOpen
+end)
 
 local DangerSec = AddSection(SettingsScroll, "Danger Zone", "Settings")
 AddButton(DangerSec, "Unload Hub", function() UnloadHub() end, true)
@@ -1167,6 +1204,9 @@ local function buildGameContext(def, page)
 		AddInfo = AddInfo, AddText = AddText,
 		Notify = Notify, track = track, safeCall = safeCall,
 		getRoot = getRoot, getHum = getHum, copy = clipboardFn,
+		ScreenGui = ScreenGui,
+		SetAntiAfk = function(on) setAntiAfk(on); antiAfkToggle.Set(on, true) end,
+		SetLowGfx = function(on) setLowGfx(on); lowGfxToggle.Set(on, true) end,
 		OnUnload = function(fn) table.insert(cleanupFns, fn) end,
 	}
 end
@@ -1201,7 +1241,7 @@ local function loadGame(def)
 end
 
 -- ------------------------------------------------------------------
--- JOGO: MERGE A MINI ARMY
+-- JOGO: MERGE A MINI ARMY  (só aparece quando você está nesse jogo)
 -- ------------------------------------------------------------------
 RegisterGame({
 	Name = "Merge a Mini Army",
@@ -1212,9 +1252,114 @@ RegisterGame({
 	Build = function(ctx)
 		local KEYWORDS = {"captur", "conquer", "garrison", "compound", "airbase", "territor"}
 		local prompts, originalHold = {}, {}
-		local cfg = {AutoCapture = false, Range = 25, Instant = false}
-		local promptCount, nearCount = 0, 0
+		local territoryCache = setmetatable({}, {__mode = "k"})
+		local cfg = {
+			AutoCapture = false, Range = 25, Instant = false, Delay = 0.6,
+			Merge = false, Buy = false, Collect = false, Upgrade = false, Rebirth = false,
+		}
+		local running = true
+		local clicks = 0
+		local ctl = {}
+		local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
+		-- ---------- Auto clicker de botões da interface ----------
+		local CATS = {
+			{key = "Merge",   words = {"merge"}},
+			{key = "Buy",     words = {"buy", "spawn", "summon", "recruit", "hire", "deploy"}},
+			{key = "Collect", words = {"collect", "claim"}},
+			{key = "Upgrade", words = {"upgrade"}},
+			{key = "Rebirth", words = {"rebirth"}},
+		}
+		-- Nunca clica em botões ligados a Robux / gamepass
+		local BLOCK = {"robux", "r$", "gamepass", "game pass", "premium", "vip", "gift", "donat", "x2", "2x", "x3", "3x"}
+
+		local buttons = {}
+		local function trackButton(d)
+			if (d:IsA("TextButton") or d:IsA("ImageButton")) and not d:IsDescendantOf(ctx.ScreenGui) then
+				buttons[d] = true
+			end
+		end
+
+		task.spawn(function()
+			local i = 0
+			for _, d in ipairs(PlayerGui:GetDescendants()) do
+				trackButton(d)
+				i = i + 1
+				if i % 300 == 0 then task.wait() end
+			end
+		end)
+		ctx.track(PlayerGui.DescendantAdded:Connect(trackButton))
+		ctx.track(PlayerGui.DescendantRemoving:Connect(function(d) buttons[d] = nil end))
+
+		local function buttonText(b)
+			local t = b:IsA("TextButton") and b.Text or ""
+			for _, c in ipairs(b:GetDescendants()) do
+				if c:IsA("TextLabel") or c:IsA("TextButton") then t = t .. " " .. c.Text end
+			end
+			return string.lower(t .. " " .. b.Name)
+		end
+
+		local function hasAny(text, words)
+			for _, w in ipairs(words) do
+				if string.find(text, w, 1, true) then return true end
+			end
+			return false
+		end
+
+		local function isShown(b)
+			if not b.Parent then return false end
+			local cur = b
+			while cur and cur ~= PlayerGui do
+				if cur:IsA("GuiObject") and not cur.Visible then return false end
+				if cur:IsA("ScreenGui") and not cur.Enabled then return false end
+				cur = cur.Parent
+			end
+			return b.AbsoluteSize.X > 0 and b.AbsoluteSize.Y > 0
+		end
+
+		local function clickButton(b)
+			local ok = false
+			if firesignal then
+				if pcall(firesignal, b.MouseButton1Click) then ok = true end
+				pcall(firesignal, b.Activated)
+			end
+			if not ok and getconnections then
+				for _, sig in ipairs({b.MouseButton1Click, b.Activated}) do
+					pcall(function()
+						for _, c in ipairs(getconnections(sig)) do c:Fire() end
+					end)
+				end
+				ok = true
+			end
+			return ok
+		end
+
+		task.spawn(function()
+			while running and ctx.ScreenGui.Parent do
+				task.wait(cfg.Delay)
+				if cfg.Merge or cfg.Buy or cfg.Collect or cfg.Upgrade or cfg.Rebirth then
+					local list = {}
+					for b in pairs(buttons) do list[#list + 1] = b end
+					for i = 1, #list do
+						local b = list[i]
+						if b.Parent and isShown(b) then
+							local text = buttonText(b)
+							if not hasAny(text, BLOCK) then
+								for _, cat in ipairs(CATS) do
+									if cfg[cat.key] and hasAny(text, cat.words) then
+										if clickButton(b) then clicks = clicks + 1 end
+										break
+									end
+								end
+							end
+						end
+						if i % 50 == 0 then task.wait() end
+					end
+				end
+			end
+		end)
+
+		-- ---------- Territórios (ProximityPrompts) ----------
 		local function promptPos(p)
 			local par = p.Parent
 			if not par then return nil end
@@ -1225,13 +1370,17 @@ RegisterGame({
 		end
 
 		local function isTerritory(p)
+			local cached = territoryCache[p]
+			if cached ~= nil then return cached end
 			local par = p.Parent
 			if not par then return false end
 			local text = string.lower(p.ActionText .. " " .. p.ObjectText .. " " .. par.Name .. " " .. (par.Parent and par.Parent.Name or ""))
+			local result = false
 			for _, k in ipairs(KEYWORDS) do
-				if string.find(text, k, 1, true) then return true end
+				if string.find(text, k, 1, true) then result = true break end
 			end
-			return false
+			territoryCache[p] = result
+			return result
 		end
 
 		local function applyInstant(p)
@@ -1248,7 +1397,6 @@ RegisterGame({
 			originalHold = {}
 		end
 
-		-- Rastreia ProximityPrompts (scan inicial em lotes + eventos)
 		task.spawn(function()
 			local i = 0
 			for _, d in ipairs(workspace:GetDescendants()) do
@@ -1267,7 +1415,7 @@ RegisterGame({
 			end
 		end))
 		ctx.track(workspace.DescendantRemoving:Connect(function(d)
-			if prompts[d] then prompts[d] = nil; originalHold[d] = nil end
+			if prompts[d] then prompts[d] = nil; originalHold[d] = nil; territoryCache[d] = nil end
 		end))
 
 		local function nearestTerritory(minDist)
@@ -1286,13 +1434,41 @@ RegisterGame({
 			return best
 		end
 
-		-- UI
+		-- ---------- UI: AFK ----------
+		local afkSec = ctx.Section("AFK Mode")
+		ctx.AddToggle(afkSec, "AFK Farm Mode", "Anti-AFK + auto merge, buy, collect, upgrade, capture", false, function(on)
+			ctx.SetAntiAfk(on)
+			for _, key in ipairs({"Merge", "Buy", "Collect", "Upgrade"}) do
+				cfg[key] = on
+				ctl[key].Set(on, true)
+			end
+			local cap = on and fireproximityprompt ~= nil
+			cfg.AutoCapture = cap
+			ctl.AutoCapture.Set(cap, true)
+			if on and not (firesignal or getconnections) then
+				ctx.Notify("AFK Mode", "Executor can't click UI buttons", 4)
+			end
+		end)
+		ctx.AddToggle(afkSec, "AFK Low Graphics", "Reduces FPS usage while idle", false, function(on)
+			ctx.SetLowGfx(on)
+		end)
+
+		-- ---------- UI: Automação ----------
+		local autoSec = ctx.Section("Automation")
+		ctl.Merge = ctx.AddToggle(autoSec, "Auto Merge", "Clicks the Merge button when it is visible", false, function(on) cfg.Merge = on end)
+		ctl.Buy = ctx.AddToggle(autoSec, "Auto Buy / Spawn Units", "Clicks buy / spawn / summon buttons", false, function(on) cfg.Buy = on end)
+		ctl.Collect = ctx.AddToggle(autoSec, "Auto Collect / Claim", "Clicks collect and claim buttons", false, function(on) cfg.Collect = on end)
+		ctl.Upgrade = ctx.AddToggle(autoSec, "Auto Upgrade", "Clicks upgrade buttons", false, function(on) cfg.Upgrade = on end)
+		ctl.Rebirth = ctx.AddToggle(autoSec, "Auto Rebirth", "Careful: resets progress", false, function(on) cfg.Rebirth = on end)
+		ctx.AddSlider(autoSec, "Action Delay", 0.2, 3, cfg.Delay, 0.1, "s", function(v) cfg.Delay = v end)
+		ctx.AddText(autoSec, "Buttons tied to Robux, gamepasses or x2 boosts are always ignored.")
+
+		-- ---------- UI: Territórios ----------
 		local capSec = ctx.Section("Territories")
-		local autoToggle
-		autoToggle = ctx.AddToggle(capSec, "Auto Capture", "Triggers capture prompts of nearby territories", false, function(on)
+		ctl.AutoCapture = ctx.AddToggle(capSec, "Auto Capture", "Triggers capture prompts of nearby territories", false, function(on)
 			if on and not fireproximityprompt then
 				ctx.Notify("Auto Capture", "Your executor lacks fireproximityprompt", 4)
-				autoToggle.Set(false, true)
+				ctl.AutoCapture.Set(false, true)
 				return
 			end
 			cfg.AutoCapture = on
@@ -1315,11 +1491,31 @@ RegisterGame({
 			ctx.Notify("Teleport", "Moved to the nearest territory", 2)
 		end)
 
+		-- ---------- UI: Status ----------
 		local infoSec = ctx.Section("Status")
+		local clicksVal = ctx.AddInfo(infoSec, "Buttons clicked", "0")
 		local trackedVal = ctx.AddInfo(infoSec, "Prompts tracked", "0")
 		local nearVal = ctx.AddInfo(infoSec, "Territories in range", "0")
 
+		-- ---------- UI: Ferramentas ----------
 		local devSec = ctx.Section("Developer Tools")
+		ctx.AddButton(devSec, "Scan Buttons", function()
+			local out = {}
+			for b in pairs(buttons) do
+				if b.Parent and isShown(b) then
+					table.insert(out, string.format("%s | text: %s", b:GetFullName(), buttonText(b)))
+				end
+			end
+			table.sort(out)
+			local text = table.concat(out, "\n")
+			if ctx.copy then
+				ctx.copy(text)
+				ctx.Notify("Scan Buttons", #out .. " visible buttons copied", 3)
+			else
+				print(text)
+				ctx.Notify("Scan Buttons", #out .. " buttons printed in the console", 3)
+			end
+		end)
 		ctx.AddButton(devSec, "Scan Remotes", function()
 			local out = {}
 			for _, d in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
@@ -1337,9 +1533,9 @@ RegisterGame({
 				ctx.Notify("Scan Remotes", #out .. " remotes printed in the console", 3)
 			end
 		end)
-		ctx.AddText(devSec, "Auto Merge and auto upgrades need the game's remote names. Run Scan Remotes and send me the list to wire them in.")
+		ctx.AddText(devSec, "If an auto feature does not click, open the game menu so the button is visible, run Scan Buttons and send me the list to tune the keywords.")
 
-		-- Loop (captura + status)
+		-- ---------- Loop (captura + status) ----------
 		local acc, statAcc = 0, 0
 		ctx.track(RunService.Heartbeat:Connect(function(dt)
 			acc = acc + dt
@@ -1350,10 +1546,11 @@ RegisterGame({
 			if acc >= 0.5 then
 				acc = 0
 				if cfg.AutoCapture and root and fireproximityprompt then
+					local rpos = root.Position
 					for p in pairs(prompts) do
-						if p.Parent and p.Enabled then
+						if p.Parent and p.Enabled and isTerritory(p) then
 							local pos = promptPos(p)
-							if pos and (pos - root.Position).Magnitude <= cfg.Range and isTerritory(p) then
+							if pos and (pos - rpos).Magnitude <= cfg.Range then
 								pcall(fireproximityprompt, p)
 							end
 						end
@@ -1367,19 +1564,22 @@ RegisterGame({
 					local total, near = 0, 0
 					for p in pairs(prompts) do
 						total = total + 1
-						if root and p.Parent then
+						if root and p.Parent and isTerritory(p) then
 							local pos = promptPos(p)
-							if pos and (pos - root.Position).Magnitude <= cfg.Range and isTerritory(p) then near = near + 1 end
+							if pos and (pos - root.Position).Magnitude <= cfg.Range then near = near + 1 end
 						end
 					end
 					trackedVal.Text = tostring(total)
 					nearVal.Text = tostring(near)
+					clicksVal.Text = tostring(clicks)
 				end
 			end
 		end))
 
 		ctx.OnUnload(function()
+			running = false
 			cfg.AutoCapture = false
+			cfg.Merge, cfg.Buy, cfg.Collect, cfg.Upgrade, cfg.Rebirth = false, false, false, false, false
 			restoreInstant()
 		end)
 	end,
@@ -1411,13 +1611,19 @@ track(UserInputService.JumpRequest:Connect(function()
 	end
 end))
 
+-- Noclip: usa lista em cache (antes varria GetDescendants todo frame)
 track(RunService.Stepped:Connect(function()
-	if State.Noclip and LocalPlayer.Character then
-		for _, p in ipairs(LocalPlayer.Character:GetDescendants()) do
-			if p:IsA("BasePart") and p.CanCollide then
-				noclipTouched[p] = true
-				p.CanCollide = false
-			end
+	if not State.Noclip then return end
+	local now = os.clock()
+	if now - noclipRefresh > 1.5 then
+		noclipRefresh = now
+		rebuildNoclip()
+	end
+	for i = 1, #noclipParts do
+		local p = noclipParts[i]
+		if p.CanCollide then
+			noclipTouched[p] = true
+			p.CanCollide = false
 		end
 	end
 end))
@@ -1427,7 +1633,7 @@ track(RunService.Heartbeat:Connect(function(dt)
 	if hum then
 		if State.SpeedOn then
 			if Original.Speed == nil then Original.Speed = hum.WalkSpeed end
-			hum.WalkSpeed = State.Speed
+			if hum.WalkSpeed ~= State.Speed then hum.WalkSpeed = State.Speed end
 		end
 		if State.JumpOn then
 			if Original.Jump == nil then
@@ -1435,9 +1641,10 @@ track(RunService.Heartbeat:Connect(function(dt)
 				Original.Jump = hum.UseJumpPower and hum.JumpPower or hum.JumpHeight
 			end
 			if hum.UseJumpPower then
-				hum.JumpPower = State.Jump
+				if hum.JumpPower ~= State.Jump then hum.JumpPower = State.Jump end
 			else
-				hum.JumpHeight = (State.Jump * State.Jump) / (2 * workspace.Gravity)
+				local target = (State.Jump * State.Jump) / (2 * workspace.Gravity)
+				if hum.JumpHeight ~= target then hum.JumpHeight = target end
 			end
 		end
 	end
@@ -1465,29 +1672,42 @@ track(RunService.Heartbeat:Connect(function(dt)
 		startFly()
 	end
 
-	-- Lighting
+	-- Lighting (só escreve quando o valor mudou)
 	if State.Fullbright and fbOrig then
-		Lighting.Brightness = 2
-		Lighting.ClockTime = 14
-		Lighting.GlobalShadows = false
-		Lighting.Ambient = Color3.fromRGB(178, 178, 178)
-		Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
+		if Lighting.Brightness ~= 2 then Lighting.Brightness = 2 end
+		if Lighting.ClockTime ~= 14 then Lighting.ClockTime = 14 end
+		if Lighting.GlobalShadows then Lighting.GlobalShadows = false end
+		local amb = Color3.fromRGB(178, 178, 178)
+		if Lighting.Ambient ~= amb then Lighting.Ambient = amb end
+		if Lighting.OutdoorAmbient ~= amb then Lighting.OutdoorAmbient = amb end
 	end
 	if State.NoFog and fogOrig then
-		Lighting.FogStart = 1e6
-		Lighting.FogEnd = 1e6
-		for atm in pairs(fogOrig.Atmos) do if atm.Parent then atm.Density = 0 end end
+		if Lighting.FogStart ~= 1e6 then Lighting.FogStart = 1e6 end
+		if Lighting.FogEnd ~= 1e6 then Lighting.FogEnd = 1e6 end
+		for atm in pairs(fogOrig.Atmos) do
+			if atm.Parent and atm.Density ~= 0 then atm.Density = 0 end
+		end
 	end
 end))
 
 local frameCount, lastStat = 0, os.clock()
+local snowAcc = 0
 track(RunService.RenderStepped:Connect(function(dt)
 	if State.FovOn then
 		local cam = workspace.CurrentCamera
-		if cam then cam.FieldOfView = State.Fov end
+		if cam and cam.FieldOfView ~= State.Fov then cam.FieldOfView = State.Fov end
 	end
 
-	if isOpen then updateSnow(dt) end
+	-- Neve a ~30 FPS, só com menu aberto
+	if isOpen and State.Snow then
+		snowAcc = snowAcc + dt
+		if snowAcc >= 1 / 30 then
+			updateSnow(snowAcc)
+			snowAcc = 0
+		end
+	else
+		snowAcc = 0
+	end
 
 	frameCount = frameCount + 1
 	local now = os.clock()
@@ -1519,6 +1739,8 @@ end))
 track(LocalPlayer.CharacterAdded:Connect(function(char)
 	Original.Speed, Original.Jump = nil, nil
 	noclipTouched = {}
+	table.clear(noclipParts)
+	noclipRefresh = 0
 	flyObjs = nil
 	flyVelocity = Vector3.zero
 	if State.Fly then
@@ -1547,7 +1769,7 @@ local function setOpen(state)
 		hubCenter = clampCenter(hubCenter)
 		MainFrame.Position = UDim2.fromOffset(hubCenter.X, hubCenter.Y)
 		MainFrame.Visible = true
-		SnowContainer.Visible = true
+		SnowContainer.Visible = State.Snow
 		HubScale.Scale = currentScale * 0.9
 		MainFrame.GroupTransparency = 1
 		tween(MainFrame, 0.35, {GroupTransparency = 0})
