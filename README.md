@@ -1,5 +1,5 @@
 -- ================================================================= --
---   DARK SHADOW HUB v4.1  |  LUXURY EDITION                          --
+--   DARK SHADOW HUB v4.2  |  LUXURY EDITION                          --
 --   Merge a Mini Army: Auto Merge SEM teleporte (anda livre),        --
 --   Auto Rebirth / Upgrade silenciosos, efeitos sonoros com volume,  --
 --   scripts por jogo (só aparecem no jogo certo), Anti-Lag e Mobile. --
@@ -376,7 +376,7 @@ do
 	create("UIGradient", {
 		Color = ColorSequence.new(COLORS.TextMain, COLORS.AccentGlow), Parent = title,
 	})
-	label({Size = UDim2.new(1, -46, 0, 12), Position = UDim2.new(0, 44, 0.5, 2), Text = "HUB  v4.1",
+	label({Size = UDim2.new(1, -46, 0, 12), Position = UDim2.new(0, 44, 0.5, 2), Text = "HUB  v4.2",
 		TextSize = 10, TextColor3 = COLORS.Accent, Parent = logo})
 
 	TabsContainer = create("ScrollingFrame", {
@@ -1407,11 +1407,17 @@ do
 	Refs.gameName = AddInfo(gameSec, "Name", "Loading...")
 	AddInfo(gameSec, "Place ID", tostring(game.PlaceId))
 	Refs.age = AddInfo(gameSec, "Server age", "--")
-	Refs.gameScript = AddInfo(gameSec, "Game script", "None for this game")
+	Refs.gameId = AddInfo(gameSec, "Game ID", tostring(game.GameId))
+	Refs.gameScript = AddInfo(gameSec, "Game script", "Detecting...")
 	Refs.device = AddInfo(gameSec, "Mode", IS_TOUCH and "Mobile / Emulator" or "PC")
+	AddButton(gameSec, "Copy Game Info (Name / PlaceId / GameId)", function()
+		local text = string.format("Name: %s | PlaceId: %d | GameId: %d", Refs.gameName.Text, game.PlaceId, game.GameId)
+		if clipboardFn then clipboardFn(text); Notify("Game Info", "Copied to clipboard", 2.5)
+		else Notify("Game Info", text, 5) end
+	end)
 
 	local about = AddSection(HomeScroll, "About")
-	AddText(about, "Dark Shadow Hub v4.1\nMenu: botão flutuante" .. (IS_TOUCH and "" or " ou tecla (padrão Right Shift)") .. ". Arraste a sidebar ou o cabeçalho para mover. Scripts de jogo aparecem sozinhos, só no jogo certo. Performance Guard ligado por padrão.")
+	AddText(about, "Dark Shadow Hub v4.2\nMenu: botão flutuante" .. (IS_TOUCH and "" or " ou tecla (padrão Right Shift)") .. ". Arraste a sidebar ou o cabeçalho para mover. Scripts de jogo aparecem sozinhos, só no jogo certo. Performance Guard ligado por padrão.")
 end
 
 -- ---------- 10.2 PLAYER ----------
@@ -1671,7 +1677,11 @@ end
 -- 11. SISTEMA DE SCRIPTS POR JOGO
 --  Cada jogo vira uma ABA própria e SÓ aparece dentro do jogo dele.
 --  Para adicionar outro jogo: copie o bloco RegisterGame({...}) e
---  preencha PlaceIds / GameIds (exato) ou NameMatch (pelo nome).
+--  preencha, em ordem de confiança:
+--    PlaceIds / GameIds  -> detecção EXATA (não depende de idioma)
+--    Names               -> nomes do jogo (ignora maiúsculas, acentos e símbolos)
+--    Detect              -> função opcional que olha o conteúdo do jogo
+--  O script só é carregado se UM desses métodos reconhecer o jogo.
 -- ================================================================= --
 local cleanupFns = {}
 local GameModules = {}
@@ -1697,6 +1707,11 @@ local function buildGameContext(def, group)
 	}
 end
 
+-- Deixa só letras/números minúsculos: "[UPDATE] Merge a Mini Army!" -> "updatemergeaminiarmy"
+local function normalize(text)
+	return (string.gsub(string.lower(tostring(text or "")), "[^%w]", ""))
+end
+
 local function matchesGame(def, gameName)
 	for _, id in ipairs(def.PlaceIds or {}) do
 		if id == game.PlaceId then return true end
@@ -1704,8 +1719,19 @@ local function matchesGame(def, gameName)
 	for _, id in ipairs(def.GameIds or {}) do
 		if id == game.GameId then return true end
 	end
-	if gameName and def.NameMatch then
-		return string.find(string.lower(gameName), string.lower(def.NameMatch), 1, true) ~= nil
+	local candidates = {}
+	if def.NameMatch then candidates[#candidates + 1] = def.NameMatch end
+	for _, n in ipairs(def.Names or {}) do candidates[#candidates + 1] = n end
+	if #candidates > 0 then
+		local haystacks = {normalize(gameName), normalize(game.Name)}
+		for _, c in ipairs(candidates) do
+			local nc = normalize(c)
+			if #nc > 0 then
+				for _, h in ipairs(haystacks) do
+					if #h > 0 and string.find(h, nc, 1, true) then return true end
+				end
+			end
+		end
 	end
 	return false
 end
@@ -1745,8 +1771,38 @@ RegisterGame({
 	Name = "Merge a Mini Army",
 	TabName = "Mini Army",
 	Icon = ICONS.Merge,
-	PlaceIds = {},                       -- opcional: coloque o PlaceId para detecção exata
-	NameMatch = "merge a mini army",
+	PlaceIds = {},                       -- opcional: PlaceId exato (veja em Home > Copy Game Info)
+	GameIds = {},                        -- opcional: GameId exato
+	Names = {"Merge a Mini Army", "Merge Mini Army", "Mini Army"},
+	-- Plano B (independe de idioma): olha os NOMES de remotes/objetos do jogo, que o
+	-- desenvolvedor escreve em inglês. Exige "merge" + algo de exército juntos.
+	Detect = function()
+		local hasMerge, hasArmy = false, false
+		local ARMY = {"army", "deploy", "airdrop", "garrison", "outpost", "troop", "soldier"}
+		local function check(inst)
+			local n = string.lower(inst.Name)
+			if not hasMerge and string.find(n, "merge", 1, true) then hasMerge = true end
+			if not hasArmy and hasAny(n, ARMY) then hasArmy = true end
+		end
+		local i = 0
+		for _, d in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
+			check(d)
+			i = i + 1
+			if hasMerge and hasArmy then return true end
+			if i % 800 == 0 then task.wait() end
+			if i > 8000 then break end
+		end
+		for _, c in ipairs(workspace:GetChildren()) do
+			check(c)
+			for _, g in ipairs(c:GetChildren()) do
+				check(g)
+				i = i + 1
+				if i % 800 == 0 then task.wait() end
+			end
+			if hasMerge and hasArmy then return true end
+		end
+		return hasMerge and hasArmy
+	end,
 	Build = function(ctx)
 		local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 		local running = true
@@ -2996,17 +3052,45 @@ RegisterGame({
 	end,
 })
 
--- Detecção do jogo atual: só carrega o(s) script(s) que combinam com ESTE jogo.
+-- Detecção do jogo atual (só carrega o script se ESTE for o jogo dele).
 -- Em qualquer outro jogo nenhuma aba de jogo é criada.
+-- Camadas: 1) IDs exatos  2) nome do jogo (com tentativas)  3) conteúdo do jogo
 task.spawn(function()
+	-- 1) PlaceId / GameId
 	for _, def in ipairs(GameModules) do
 		if matchesGame(def, nil) then loadGame(def) end
 	end
-	local ok, info = pcall(function() return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId) end)
-	local gameName = ok and info and info.Name or nil
-	Refs.gameName.Text = gameName or "Unknown"
+
+	-- 2) Nome vindo do Roblox (tenta algumas vezes: às vezes a primeira chamada falha)
+	local gameName
+	for _ = 1, 4 do
+		local ok, info = pcall(function() return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId) end)
+		if ok and info and info.Name then gameName = info.Name break end
+		task.wait(1.5)
+	end
+	if not ScreenGui.Parent then return end
+	Refs.gameName.Text = gameName or game.Name or "Unknown"
 	for _, def in ipairs(GameModules) do
 		if matchesGame(def, gameName) then loadGame(def) end
+	end
+
+	-- 3) Plano B: o jogo carrega aos poucos, então tenta de novo por ~1 minuto
+	for _ = 1, 12 do
+		if not ScreenGui.Parent then return end
+		local pending = false
+		for _, def in ipairs(GameModules) do
+			if def.Detect and not loadedGames[def.Name] then
+				pending = true
+				local ok, found = pcall(def.Detect)
+				if ok and found then loadGame(def) end
+			end
+		end
+		if not pending then break end
+		task.wait(5)
+	end
+
+	if next(loadedGames) == nil and ScreenGui.Parent then
+		Refs.gameScript.Text = "None for this game"
 	end
 end)
 
