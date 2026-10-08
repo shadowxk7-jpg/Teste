@@ -3120,6 +3120,771 @@ RegisterGame({
 	end,
 })
 
+-- ================================================================= --
+-- 13. JOGO: BLOX FRUITS
+--  Sub-abas: Farm | Stats | Items | Misc
+--
+--  AUTO FARM: aceita a quest pelo SEU nível, acha o mob mais próximo,
+--  fica acima e atrás dele e ataca com a arma escolhida.
+--  AUTO STATS: distribui pontos no atributo escolhido.
+--  AUTO COLLECT: vai até baús e frutas do mapa e pega.
+--  AUTO HAKI: religa o Haki de armamento depois de morrer.
+--
+--  Remotes, quests e nomes de mobs seguem a Primeira Sea e podem mudar
+--  quando o jogo atualiza. Confira com "Scan enemies" e "Scan remotes"
+--  (aba Misc). Em outras Seas use "Manual quest" no Farm.
+-- ================================================================= --
+RegisterGame({
+	Name = "Blox Fruits",
+	TabName = "Blox Fruits",
+	Icon = ICONS.Combat,
+	PlaceIds = {2753915549, 4442272183, 7449423635},   -- Primeira, Segunda e Terceira Sea
+	GameIds = {},
+	Names = {"Blox Fruits"},
+	-- Plano B: o jogo tem o remote CommF_ (nome em inglês, independe de idioma)
+	Detect = function()
+		return game:GetService("ReplicatedStorage"):FindFirstChild("CommF_", true) ~= nil
+	end,
+	Build = function(ctx)
+		-- ======================================================
+		-- 1) ESTADO E CONFIGURAÇÃO
+		-- ======================================================
+		local running = true
+		local status = "Idle"
+		local kills = 0
+		local counted = setmetatable({}, {__mode = "k"})     -- mobs já contados como mortos
+		local tried = setmetatable({}, {__mode = "k"})       -- part -> {n = tentativas, nextAt = tempo}
+		local lastNote = {}
+		local lastAccept, acceptFails = 0, 0
+		local lastAttack, lastBuso, lastEquip = 0, 0, 0
+		local spot = nil                                     -- posição salva (fallback do farm)
+		local target, targetPart = nil, nil
+		local pickups = {}                                   -- {part, kind, inst}
+		local cfg = {
+			Farm = false, Manual = false, QuestName = "", QuestLvl = 1, MobName = "",
+			Weapon = "Melee", Speed = 200, Height = 6, Behind = 3,
+			AutoStats = false, Stat = "Melee", PerTick = 1, StatEvery = 1,
+			Chests = false, Fruits = false, ESPChests = false, ESPFruits = false,
+			Haki = false,
+		}
+		local STAT_NAMES = {"Melee", "Defense", "Sword", "Gun", "Demon Fruit", "Blox Fruit"}
+		local WEAPONS = {"Melee", "Sword", "Gun", "Blox Fruit"}
+
+		-- Quests da Primeira Sea (aproximado): nível mínimo/máximo -> quest, nível da quest e mob.
+		-- Se o seu nível cair num intervalo errado, use "Manual quest" no Farm.
+		local QUESTS = {
+			{min = 1,   max = 13,    quest = "BanditQuest1",  qlvl = 1, mob = "Bandit"},
+			{min = 14,  max = 19,    quest = "JungleQuest",   qlvl = 1, mob = "Monkey"},
+			{min = 20,  max = 29,    quest = "JungleQuest",   qlvl = 2, mob = "Gorilla"},
+			{min = 30,  max = 39,    quest = "BuggyQuest1",   qlvl = 1, mob = "Pirate"},
+			{min = 40,  max = 59,    quest = "BuggyQuest1",   qlvl = 2, mob = "Brute"},
+			{min = 60,  max = 74,    quest = "DesertQuest",   qlvl = 1, mob = "Desert Bandit"},
+			{min = 75,  max = 89,    quest = "DesertQuest",   qlvl = 2, mob = "Desert Officer"},
+			{min = 90,  max = 99,    quest = "SnowQuest",     qlvl = 1, mob = "Snow Bandit"},
+			{min = 100, max = 119,   quest = "SnowQuest",     qlvl = 2, mob = "Snowman"},
+			{min = 120, max = 149,   quest = "MarineQuest2",  qlvl = 1, mob = "Chief Petty Officer"},
+			{min = 150, max = 174,   quest = "SkyQuest",      qlvl = 1, mob = "Sky Bandit"},
+			{min = 175, max = 189,   quest = "SkyQuest",      qlvl = 2, mob = "Dark Master"},
+			{min = 190, max = 209,   quest = "PrisonerQuest", qlvl = 1, mob = "Prisoner"},
+			{min = 210, max = 249,   quest = "PrisonerQuest", qlvl = 2, mob = "Dangerous Prisoner"},
+			{min = 250, max = 274,   quest = "ColosseumQuest", qlvl = 1, mob = "Toga Warrior"},
+			{min = 275, max = 99999, quest = "ColosseumQuest", qlvl = 2, mob = "Gladiator"},
+		}
+
+		-- ======================================================
+		-- 2) UTILITÁRIOS
+		-- ======================================================
+		local function cleanKey(s)
+			local t = string.gsub(tostring(s or ""), "%b[]", "")     -- tira "[Lv. 10]" etc.
+			return (string.gsub(string.lower(t), "[^%w]", ""))
+		end
+
+		local function trim(s)
+			return (string.gsub(tostring(s or ""), "^%s*(.-)%s*$", "%1"))
+		end
+
+		local function matchFrom(list, text)
+			local k = cleanKey(text)
+			if k == "" then return nil end
+			for _, v in ipairs(list) do
+				if cleanKey(v) == k then return v end
+			end
+			return nil
+		end
+
+		local function matchWeapon(text)
+			if cleanKey(text) == "fruit" then return "Blox Fruit" end
+			return matchFrom(WEAPONS, text)
+		end
+
+		-- Avisos repetidos ficam limitados (no máximo um igual a cada 6s)
+		local function note(msg, force)
+			local now = os.clock()
+			if not force and lastNote[msg] and now - lastNote[msg] < 6 then return end
+			lastNote[msg] = now
+			Notify("Blox Fruits", msg, 2.5, true)
+		end
+
+		local function dataValue(name)
+			local d = LocalPlayer:FindFirstChild("Data")
+			local v = d and d:FindFirstChild(name)
+			if v and v:IsA("ValueBase") and typeof(v.Value) == "number" then return v.Value end
+			return nil
+		end
+
+		local function dump(title, lines)
+			local text = title .. "\n" .. table.concat(lines, "\n")
+			print("[Blox Fruits] " .. title)
+			print(text)
+			if ctx.copy then pcall(ctx.copy, text) end
+			Notify("Blox Fruits", title .. " (" .. #lines .. " linhas) - copiado / F9", 4)
+		end
+
+		-- ======================================================
+		-- 3) REMOTE (CommF_) COM TEMPO LIMITE
+		-- ======================================================
+		local commF = nil
+		local function getRemote()
+			if commF and commF.Parent then return commF end
+			commF = game:GetService("ReplicatedStorage"):FindFirstChild("CommF_", true)
+			if commF and not commF:IsA("RemoteFunction") then commF = nil end
+			return commF
+		end
+
+		-- Chama o remote sem travar o loop se o servidor demorar para responder
+		local function invoke(timeout, ...)
+			local rf = getRemote()
+			if not rf then return false, "CommF_ not found" end
+			local args = table.pack(...)
+			local done, ok, res = false, false, nil
+			task.spawn(function()
+				ok, res = pcall(rf.InvokeServer, rf, table.unpack(args, 1, args.n))
+				done = true
+			end)
+			local t0 = os.clock()
+			while not done and running and os.clock() - t0 < (timeout or 5) do
+				task.wait(0.05)
+			end
+			if not done then return false, "timeout" end
+			return ok, res
+		end
+
+		local function hasBuso()
+			local c = LocalPlayer.Character
+			if not c then return false end
+			if c:GetAttribute("HasBuso") == true then return true end
+			local v = c:FindFirstChild("HasBuso")
+			return v ~= nil and (not v:IsA("BoolValue") or v.Value)
+		end
+
+		-- ======================================================
+		-- 4) MOVIMENTO
+		-- ======================================================
+		-- Evita CFrame.lookAt degenerado (alvo na mesma vertical)
+		local function lookCF(pos, to)
+			local d = to - pos
+			if Vector3.new(d.X, 0, d.Z).Magnitude < 0.5 then
+				to = pos + Vector3.new(0, 0, -1)
+			end
+			return CFrame.lookAt(pos, to)
+		end
+
+		-- Anda até "goal" na velocidade do slider, olhando para "look"
+		local function moveToward(goal, look, dt)
+			local root = getRoot()
+			if not root then return end
+			local cur = root.Position
+			local delta = goal - cur
+			local dist = delta.Magnitude
+			local step = cfg.Speed * dt
+			local newPos = goal
+			if dist > step then newPos = cur + delta.Unit * step end
+			root.CFrame = lookCF(newPos, look or goal)
+			root.AssemblyLinearVelocity = Vector3.zero
+		end
+
+		-- ======================================================
+		-- 5) QUEST, MOBS E ARMAS
+		-- ======================================================
+		local function currentQuest()
+			if cfg.Manual then
+				if cfg.QuestName == "" then return nil end
+				return {quest = cfg.QuestName, qlvl = cfg.QuestLvl, mob = cfg.MobName}
+			end
+			local lvl = dataValue("Level")
+			if not lvl then return nil end
+			for _, q in ipairs(QUESTS) do
+				if lvl >= q.min and lvl <= q.max then return q end
+			end
+			return nil
+		end
+
+		local function questGui()
+			local pg = LocalPlayer:FindFirstChild("PlayerGui")
+			local main = pg and pg:FindFirstChild("Main")
+			local q = main and main:FindFirstChild("Quest")
+			if q and q:IsA("GuiObject") then return q end
+			return nil
+		end
+
+		local function questVisible()
+			local q = questGui()
+			return q ~= nil and q.Visible
+		end
+
+		local function questText()
+			local q = questGui()
+			if not q or not q.Visible then return nil end
+			local out = {}
+			for _, d in ipairs(q:GetDescendants()) do
+				if d:IsA("TextLabel") and d.Visible and d.Text ~= "" then
+					out[#out + 1] = d.Text
+					if #out >= 3 then break end
+				end
+			end
+			if #out == 0 then return "Quest window open (no text found)" end
+			return table.concat(out, " | ")
+		end
+
+		-- Pede a quest em outra thread: o farm continua andando enquanto o servidor responde
+		local function acceptQuest(q, now)
+			lastAccept = now
+			task.spawn(function()
+				local ok, res = invoke(6, "StartQuest", q.quest, q.qlvl)
+				if not ok then note("Quest request failed: " .. tostring(res)) end
+			end)
+		end
+
+		-- Procura o mob mais próximo com o nome certo (ignora o que está morto)
+		local function findEnemy(mob)
+			local root = getRoot()
+			if not root then return nil, nil end
+			local want = (mob and mob ~= "") and cleanKey(mob) or nil
+			local folder = workspace:FindFirstChild("Enemies")
+			local pool = folder and folder:GetChildren() or workspace:GetChildren()
+			local best, bestPart, bestD = nil, nil, math.huge
+			for _, m in ipairs(pool) do
+				if m:IsA("Model") and not Players:GetPlayerFromCharacter(m) and (not want or cleanKey(m.Name) == want) then
+					local h = m:FindFirstChildOfClass("Humanoid")
+					local p = m:FindFirstChild("HumanoidRootPart")
+					if h and p and h.Health > 0 then
+						local d = (p.Position - root.Position).Magnitude
+						if d < bestD then best, bestPart, bestD = m, p, d end
+					end
+				end
+			end
+			return best, bestPart
+		end
+
+		-- Deixa a arma escolhida na mão (Tool.ToolTip: Melee / Sword / Gun / Blox Fruit)
+		local function equipWeapon(now)
+			local hum, char = getHum(), LocalPlayer.Character
+			if not hum or not char then return nil end
+			local equipped = char:FindFirstChildOfClass("Tool")
+			if equipped and equipped.ToolTip == cfg.Weapon then return equipped end
+			if now - lastEquip < 0.5 then return equipped end
+			lastEquip = now
+			local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+			local containers = {char}
+			if bp then table.insert(containers, bp) end
+			local found = nil
+			for _, container in ipairs(containers) do
+				for _, t in ipairs(container:GetChildren()) do
+					if t:IsA("Tool") and t.ToolTip == cfg.Weapon then
+						found = t
+						break
+					end
+				end
+				if found then break end
+			end
+			if not found then
+				if equipped then return equipped end
+				found = bp and bp:FindFirstChildOfClass("Tool") or nil
+				if not found then return nil end
+				note("No " .. cfg.Weapon .. " tool found, using " .. found.Name)
+			end
+			if found.Parent ~= char then
+				pcall(function() hum:EquipTool(found) end)
+			end
+			return found
+		end
+
+		-- ======================================================
+		-- 6) ITENS DO MAPA (baús e frutas)
+		-- ======================================================
+		local function kindOf(inst)
+			local n = string.lower(inst.Name)
+			if string.find(n, "chest", 1, true) then return "Chest" end
+			if inst:IsA("Tool") and (inst.ToolTip == "Blox Fruit" or string.find(n, "fruit", 1, true)) then
+				return "Fruit"
+			end
+			return nil
+		end
+
+		local function partOf(inst)
+			if inst:IsA("BasePart") then return inst end
+			if inst:IsA("Tool") then
+				local h = inst:FindFirstChild("Handle")
+				return (h and h:IsA("BasePart")) and h or nil
+			end
+			if inst:IsA("Model") then
+				return inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart", true)
+			end
+			return nil
+		end
+
+		local function scanPickups()
+			local list = {}
+			local function consider(inst)
+				if inst:IsA("Model") and Players:GetPlayerFromCharacter(inst) then return end
+				local kind = kindOf(inst)
+				if not kind then return end
+				local part = partOf(inst)
+				if part then list[#list + 1] = {part = part, kind = kind, inst = inst} end
+			end
+			for _, c in ipairs(workspace:GetChildren()) do
+				consider(c)
+				if c:IsA("Folder") then
+					for _, g in ipairs(c:GetChildren()) do consider(g) end
+				end
+			end
+			pickups = list
+		end
+
+		local function nextPickup(now)
+			local root = getRoot()
+			if not root then return nil end
+			local best, bestD = nil, math.huge
+			for _, p in ipairs(pickups) do
+				local part = p.part
+				local wanted = (p.kind == "Chest" and cfg.Chests) or (p.kind == "Fruit" and cfg.Fruits)
+				if wanted and part and part.Parent and part:IsDescendantOf(workspace) then
+					local t = tried[part]
+					if not t or now >= t.nextAt then
+						local d = (part.Position - root.Position).Magnitude
+						if d < bestD then best, bestD = p, d end
+					end
+				end
+			end
+			return best
+		end
+
+		local function touchPart(root, part, now)
+			local t = tried[part] or {n = 0, nextAt = 0}
+			t.n = t.n + 1
+			t.nextAt = now + (t.n >= 6 and 120 or 5)     -- desiste por um tempo se não der certo
+			tried[part] = t
+			if typeof(firetouchinterest) == "function" then
+				pcall(firetouchinterest, root, part, 0)
+				task.delay(0.1, function()
+					pcall(firetouchinterest, root, part, 1)
+				end)
+			else
+				root.CFrame = part.CFrame
+			end
+		end
+
+		local function pickupTick(p, now, dt)
+			local root = getRoot()
+			local part = p.part
+			if not root or not part then return end
+			if (part.Position - root.Position).Magnitude <= 7 then
+				touchPart(root, part, now)
+			else
+				moveToward(part.Position + Vector3.new(0, 2, 0), part.Position, dt)
+			end
+		end
+
+		-- ======================================================
+		-- 7) CÉREBRO DO FARM
+		-- ======================================================
+		-- Devolve true quando usou o tick para farmar (andar / atacar)
+		local function farmTick(now, dt)
+			local q = currentQuest()
+			if not q then
+				status = "No quest for your level"
+				note("No quest for your level. Turn on Manual quest.")
+				return false
+			end
+
+			-- Aceita a quest (com intervalo, para não spammar o servidor)
+			if questVisible() then
+				acceptFails = 0
+			elseif now - lastAccept >= 6 then
+				if lastAccept > 0 then acceptFails = acceptFails + 1 end
+				if acceptFails >= 3 then note("Quest is not starting. Stand next to the quest NPC.") end
+				acceptQuest(q, now)
+			end
+
+			-- Conta o mob que acabou de morrer e escolhe outro se precisar
+			local thum = target and target:FindFirstChildOfClass("Humanoid")
+			if target and thum and thum.Health <= 0 and not counted[target] then
+				counted[target] = true
+				kills = kills + 1
+			end
+			if not (target and target.Parent and thum and thum.Health > 0 and targetPart and targetPart.Parent) then
+				target, targetPart = findEnemy(q.mob)
+			end
+			if not target or not targetPart then
+				status = "Searching " .. ((q.mob and q.mob ~= "") and q.mob or "enemy")
+				return false
+			end
+
+			local root = getRoot()
+			if not root then return false end
+			local tp = targetPart.Position
+			status = "Farming " .. target.Name
+			-- Fica acima e atrás do mob (fora do alcance do golpe dele)
+			local aim = tp + Vector3.new(0, cfg.Height, 0) - targetPart.CFrame.LookVector * cfg.Behind
+			moveToward(aim, tp, dt)
+			if (root.Position - tp).Magnitude <= 25 then
+				local tool = equipWeapon(now)
+				if tool and tool.Parent == LocalPlayer.Character and now - lastAttack >= 0.12 then
+					lastAttack = now
+					pcall(tool.Activate, tool)
+				end
+			end
+			return true
+		end
+
+		local function brainTick(now, dt)
+			local hum, root = getHum(), getRoot()
+			if not hum or not root or hum.Health <= 0 then
+				status = "Waiting for respawn"
+				return
+			end
+			if cfg.Farm and farmTick(now, dt) then return end
+			if cfg.Chests or cfg.Fruits then
+				local p = nextPickup(now)
+				if p then
+					status = "Collecting " .. (p.kind == "Chest" and "chest" or "fruit")
+					pickupTick(p, now, dt)
+					return
+				end
+			end
+			if cfg.Farm and spot then
+				status = "Waiting at farm spot"
+				moveToward(spot, nil, dt)
+				return
+			end
+			if not cfg.Farm then status = "Idle" end
+		end
+
+		-- ======================================================
+		-- 8) ESP DOS ITENS (usa a lista já escaneada)
+		-- ======================================================
+		ESP.Register("BFChests", function()
+			local out = {}
+			for _, p in ipairs(pickups) do
+				if p.kind == "Chest" and p.part.Parent then
+					out[#out + 1] = {part = p.part, hl = p.inst:IsA("Model") and p.inst or nil,
+						text = "CHEST", color = Color3.fromRGB(255, 200, 60)}
+				end
+			end
+			return out
+		end)
+
+		ESP.Register("BFFruits", function()
+			local out = {}
+			for _, p in ipairs(pickups) do
+				if p.kind == "Fruit" and p.part.Parent then
+					out[#out + 1] = {part = p.part, hl = p.inst:IsA("Model") and p.inst or nil,
+						text = "FRUIT", color = Color3.fromRGB(190, 90, 255)}
+				end
+			end
+			return out
+		end)
+
+		-- ======================================================
+		-- 9) INTERFACE
+		-- ======================================================
+		local togs = {}     -- controles dos toggles (chave = nome em cfg)
+		local vals = {}     -- labels de status
+
+		local function applyESP()
+			ESP.SetEnabled("BFChests", cfg.ESPChests)
+			ESP.SetEnabled("BFFruits", cfg.ESPFruits)
+		end
+
+		local function stopAll()
+			for key, c in pairs(togs) do
+				c.Set(false, true)
+				cfg[key] = false
+			end
+			applyESP()
+			target, targetPart = nil, nil
+			note("Everything stopped", true)
+		end
+
+		local function scanEnemies()
+			local folder = workspace:FindFirstChild("Enemies")
+			if not folder then
+				Notify("Blox Fruits", "workspace.Enemies not found", 4)
+				return
+			end
+			local counts, order = {}, {}
+			for _, m in ipairs(folder:GetChildren()) do
+				local name = m.Name
+				if not counts[name] then
+					counts[name] = 0
+					order[#order + 1] = name
+				end
+				counts[name] = counts[name] + 1
+			end
+			table.sort(order)
+			local lines = {}
+			for _, name in ipairs(order) do
+				lines[#lines + 1] = name .. " x" .. counts[name]
+			end
+			dump("Enemies (workspace.Enemies)", lines)
+		end
+
+		local function scanRemotes()
+			local lines = {}
+			for _, d in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
+				if d:IsA("RemoteFunction") or d:IsA("RemoteEvent") then
+					lines[#lines + 1] = d.ClassName .. "  " .. d:GetFullName()
+					if #lines >= 400 then break end
+				end
+			end
+			dump("Remotes (ReplicatedStorage)", lines)
+		end
+
+		-- ---------- FARM ----------
+		local pFarm = ctx.Page("Farm", ctx.Icons.Combat)
+		do
+			local sec = pFarm.Section("Auto Farm")
+			togs.Farm = AddToggle(sec, "Auto Farm", "Takes the quest for your level and kills the mob", false, function(on)
+				cfg.Farm = on
+				target, targetPart = nil, nil
+				lastAccept, acceptFails = 0, 0
+			end)
+			togs.Manual = AddToggle(sec, "Manual quest", "Use the quest name, level and mob below", false, function(on)
+				cfg.Manual = on
+				target, targetPart = nil, nil
+			end)
+			AddInput(sec, "Quest name", "e.g. BanditQuest1", "", function(text)
+				cfg.QuestName = trim(text)
+				target, targetPart = nil, nil
+			end)
+			AddInput(sec, "Quest level", "e.g. 1", "1", function(text)
+				cfg.QuestLvl = math.max(1, math.floor(tonumber(text) or 1))
+			end)
+			AddInput(sec, "Mob name", "empty = nearest enemy", "", function(text)
+				cfg.MobName = trim(text)
+				target, targetPart = nil, nil
+			end)
+			AddInput(sec, "Weapon", "Melee / Sword / Gun / Blox Fruit", cfg.Weapon, function(text)
+				local w = matchWeapon(text)
+				if w then
+					cfg.Weapon = w
+					note("Weapon: " .. w, true)
+				else
+					note("Unknown weapon. Use Melee, Sword, Gun or Blox Fruit.", true)
+				end
+			end)
+
+			local sm = pFarm.Section("Movement")
+			AddSlider(sm, "Walk speed", 50, 400, cfg.Speed, 10, " st/s", function(v) cfg.Speed = v end)
+			AddSlider(sm, "Height above mob", 2, 20, cfg.Height, 1, " st", function(v) cfg.Height = v end)
+			AddSlider(sm, "Behind mob", 0, 10, cfg.Behind, 1, " st", function(v) cfg.Behind = v end)
+
+			local sp = pFarm.Section("Farm spot")
+			AddButton(sp, "Save farm spot (here)", function()
+				local root = getRoot()
+				if not root then
+					note("Character not ready", true)
+					return
+				end
+				spot = root.Position
+				note("Farm spot saved", true)
+			end)
+			AddButton(sp, "Clear farm spot", function()
+				spot = nil
+				note("Farm spot cleared", true)
+			end)
+
+			local ss = pFarm.Section("Status")
+			vals.Quest = AddInfo(ss, "Quest", "-")
+			vals.Target = AddInfo(ss, "Target", "-")
+			vals.Kills = AddInfo(ss, "Kills", "0")
+			vals.Level = AddInfo(ss, "Level", "-")
+			vals.Status = AddInfo(ss, "Status", "Idle")
+			vals.Spot = AddInfo(ss, "Farm spot", "Not set")
+			AddText(ss, "Stand next to the quest NPC once before turning on Auto Farm, so the quest can start. Manual quest works for other Seas.")
+		end
+
+		-- ---------- STATS ----------
+		local pStats = ctx.Page("Stats", ctx.Icons.Bolt)
+		do
+			local sec = pStats.Section("Auto Stats")
+			togs.AutoStats = AddToggle(sec, "Auto Stats", "Spends your points on the stat below", false, function(on)
+				cfg.AutoStats = on
+			end)
+			AddInput(sec, "Stat", "Melee / Defense / Sword / Gun / Demon Fruit / Blox Fruit", cfg.Stat, function(text)
+				local s = matchFrom(STAT_NAMES, text)
+				if s then
+					cfg.Stat = s
+					note("Stat: " .. s, true)
+				else
+					note("Unknown stat. Check the list in the placeholder.", true)
+				end
+			end)
+			AddSlider(sec, "Points per tick", 1, 10, cfg.PerTick, 1, "", function(v) cfg.PerTick = v end)
+			AddSlider(sec, "Interval", 0.2, 5, cfg.StatEvery, 0.1, " s", function(v) cfg.StatEvery = v end)
+			AddButton(sec, "Add 1 point now", function()
+				task.spawn(function()
+					local ok = invoke(5, "AddPoint", cfg.Stat, 1)
+					note(ok and ("+1 " .. cfg.Stat) or "AddPoint request failed", true)
+				end)
+			end)
+			vals.Points = AddInfo(sec, "Points", "-")
+			vals.TargetStat = AddInfo(sec, "Target stat", cfg.Stat)
+		end
+
+		-- ---------- ITEMS ----------
+		local pItems = ctx.Page("Items", ctx.Icons.Economy)
+		do
+			local sec = pItems.Section("Auto collect")
+			togs.Chests = AddToggle(sec, "Collect chests", "Walks to chests on the map and opens them", false, function(on)
+				cfg.Chests = on
+			end)
+			togs.Fruits = AddToggle(sec, "Collect fruits", "Walks to dropped fruits and picks them up", false, function(on)
+				cfg.Fruits = on
+			end)
+
+			local se = pItems.Section("ESP")
+			togs.ESPChests = AddToggle(se, "Chest ESP", "Highlights chests", false, function(on)
+				cfg.ESPChests = on
+				ESP.SetEnabled("BFChests", on)
+			end)
+			togs.ESPFruits = AddToggle(se, "Fruit ESP", "Highlights dropped fruits", false, function(on)
+				cfg.ESPFruits = on
+				ESP.SetEnabled("BFFruits", on)
+			end)
+
+			local sc = pItems.Section("Nearby")
+			vals.Chests = AddInfo(sc, "Chests found", "0")
+			vals.Fruits = AddInfo(sc, "Fruits found", "0")
+		end
+
+		-- ---------- MISC ----------
+		local pMisc = ctx.Page("Misc", ctx.Icons.Settings)
+		do
+			local sh = pMisc.Section("Haki")
+			togs.Haki = AddToggle(sh, "Auto Armament Haki", "Turns Buso back on after you respawn", false, function(on)
+				cfg.Haki = on
+			end)
+
+			local st = pMisc.Section("Tools")
+			AddButton(st, "Show current quest", function()
+				Notify("Current quest", questText() or "No quest window open", 5)
+			end)
+			AddButton(st, "Scan enemies", scanEnemies)
+			AddButton(st, "Scan remotes", scanRemotes)
+			AddButton(st, "Stop everything", stopAll, true)
+		end
+
+		-- ======================================================
+		-- 10) LOOPS EM SEGUNDO PLANO (todos checam "running")
+		-- ======================================================
+		-- Brain do farm / coleta (~30 Hz)
+		task.spawn(function()
+			local last = os.clock()
+			local lastErr = 0
+			while running and ctx.ScreenGui.Parent do
+				local now = os.clock()
+				local dt = math.clamp(now - last, 0.01, 0.2)
+				last = now
+				local ok, err = pcall(brainTick, now, dt)
+				if not ok and now - lastErr > 5 then
+					lastErr = now
+					warn("[ShadowHub] Blox Fruits: " .. tostring(err))
+				end
+				task.wait(0.03)
+			end
+		end)
+
+		-- Varredura de baús e frutas (2.5s)
+		task.spawn(function()
+			while running and ctx.ScreenGui.Parent do
+				pcall(scanPickups)
+				task.wait(2.5)
+			end
+		end)
+
+		-- Auto Stats
+		task.spawn(function()
+			while running and ctx.ScreenGui.Parent do
+				local wait = 0.5
+				if cfg.AutoStats then
+					local pts = dataValue("Points")
+					if pts and pts > 0 then
+						local okAll = true
+						for _ = 1, math.min(pts, cfg.PerTick) do
+							local ok = invoke(5, "AddPoint", cfg.Stat, 1)
+							if not ok then
+								okAll = false
+								break
+							end
+						end
+						if not okAll then note("AddPoint request failed") end
+					end
+					wait = cfg.StatEvery
+				end
+				task.wait(wait)
+			end
+		end)
+
+		-- Auto Haki (religa depois de morrer; no máximo 1 pedido a cada 10s)
+		task.spawn(function()
+			while running and ctx.ScreenGui.Parent do
+				if cfg.Haki and getRoot() and not hasBuso() and os.clock() - lastBuso >= 10 then
+					lastBuso = os.clock()
+					local ok = invoke(5, "Buso")
+					if not ok then note("Haki request failed") end
+				end
+				task.wait(1.5)
+			end
+		end)
+
+		-- Painel de status (2x por segundo)
+		task.spawn(function()
+			while running and ctx.ScreenGui.Parent do
+				pcall(function()
+					local q = currentQuest()
+					vals.Quest.Text = q and (q.quest .. " (Lv " .. tostring(q.qlvl) .. ")") or "None for your level"
+					vals.Target.Text = (target and target.Name) or "-"
+					vals.Kills.Text = tostring(kills)
+					vals.Level.Text = tostring(dataValue("Level") or "-")
+					vals.Points.Text = tostring(dataValue("Points") or "-")
+					vals.TargetStat.Text = cfg.Stat
+					vals.Status.Text = status
+					vals.Spot.Text = spot and "Saved" or "Not set"
+					local nc, nf = 0, 0
+					for _, p in ipairs(pickups) do
+						if p.kind == "Chest" then nc = nc + 1 else nf = nf + 1 end
+					end
+					vals.Chests.Text = tostring(nc)
+					vals.Fruits.Text = tostring(nf)
+				end)
+				task.wait(0.5)
+			end
+		end)
+
+		-- ======================================================
+		-- 11) DESCARREGAR (ao fechar o hub ou trocar de jogo)
+		-- ======================================================
+		ctx.OnUnload(function()
+			running = false
+			for key in pairs(togs) do cfg[key] = false end
+			ESP.SetEnabled("BFChests", false)
+			ESP.SetEnabled("BFFruits", false)
+			target, targetPart = nil, nil
+		end)
+	end,
+})
+
 -- Detecção do jogo atual (só carrega o script se ESTE for o jogo dele).
 -- Em qualquer outro jogo nenhuma aba de jogo é criada.
 -- Camadas: 1) IDs exatos  2) nome do jogo (com tentativas)  3) conteúdo do jogo
