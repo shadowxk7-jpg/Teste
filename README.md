@@ -1,6 +1,6 @@
 -- ================================================================= --
 --   DARK SHADOW HUB v4.2  |  LUXURY EDITION                          --
---   Merge a Mini Army: Auto Merge SEM teleporte (anda livre),        --
+--   Merge a Mini Army: Auto Merge ANDANDO (sem teleporte),           --
 --   Auto Rebirth / Upgrade silenciosos, efeitos sonoros com volume,  --
 --   scripts por jogo (só aparecem no jogo certo), Anti-Lag e Mobile. --
 -- ================================================================= --
@@ -682,7 +682,8 @@ local function registerRow(sec, row, title)
 	table.insert(sec.Rows, {Frame = row, Title = string.lower(title)})
 end
 
-local function AddToggle(sec, title, desc, default, callback)
+-- quiet = true: sem som e sem pop-up ao ligar/desligar (usado por Auto Rebirth / Auto Upgrade)
+local function AddToggle(sec, title, desc, default, callback, quiet)
 	local h = desc and 46 or 36
 	local row = create("Frame", {Size = UDim2.new(1, 0, 0, h), BackgroundTransparency = 1,
 		LayoutOrder = nextOrder(sec.Frame), Parent = sec.Frame})
@@ -714,9 +715,9 @@ local function AddToggle(sec, title, desc, default, callback)
 		tween(knob, 0.2, {Position = state and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8)})
 		tween(switch, 0.2, {BackgroundColor3 = state and COLORS.Accent or COLORS.SwitchOff})
 		if not silent then
-			Sfx.Play(state and "On" or "Off")
+			if not quiet then Sfx.Play(state and "On" or "Off") end
 			safeCall(callback, state)
-			Notify(title, state and "Enabled" or "Disabled", 1.5, true)
+			if not quiet then Notify(title, state and "Enabled" or "Disabled", 1.5, true) end
 		end
 	end
 	function control.Get() return state end
@@ -1758,14 +1759,14 @@ end
 -- 12. JOGO: MERGE A MINI ARMY
 --  Sub-abas: Quick | Merge | Economy | Combat | ESP | Tools
 --
---  AUTO MERGE (novo): você anda livre. O script acha pares iguais na
---  SUA base e funde sem teleporte, em lotes, e confere se deu certo.
---  Ordem de métodos: remote aprendido > prompt > toque (firetouch).
---  Teleporte só existe como "fallback" opcional (desligado).
+--  AUTO MERGE: o SEU personagem anda sozinho até os pares iguais da
+--  SUA base (caminhada normal, SEM teleporte). Ao passar por cima, o
+--  jogo junta. Se você andar com teclado/joystick, o auto pausa e
+--  retoma quando você parar. Ordem: remote aprendido > andar.
+--  Teleporte só existe no Auto Base Attack (opcional, como antes).
 --
---  AUTO REBIRTH / UPGRADE (novo): modo silencioso. Clica nos botões
---  mesmo com o menu do jogo fechado (nada aparece na tela e o mouse
---  nunca é usado), então você segue andando normalmente.
+--  AUTO REBIRTH / UPGRADE: modo silencioso. Clica nos botões por trás
+--  da interface: nada de pop-up, notificação ou som no seu lado.
 -- ================================================================= --
 RegisterGame({
 	Name = "Merge a Mini Army",
@@ -1811,9 +1812,9 @@ RegisterGame({
 		local MERGE_WORDS = {"merge", "combine", "fuse"}
 
 		local cfg = {
-			-- merge
-			Merge = false, MergeDelay = 0.1, Batch = 3, UseRemote = true, AutoLearn = true,
-			Walk = false,            -- fallback com teleporte (desligado por padrão)
+			-- merge (anda de verdade até os pares; sem teleporte)
+			Merge = false, MergeDelay = 0.1, UseRemote = true, AutoLearn = true,
+			WalkTimeout = 10,        -- segundos máximos para chegar em cada unidade
 			Drag = false, MergeBtn = false, UnitWords = {}, BaseRadius = 70,
 			-- economia
 			Upgrade = false, UpgradeEvery = 1, UpgradeWords = {}, Rebirth = false, RebirthEvery = 20,
@@ -1827,6 +1828,9 @@ RegisterGame({
 			-- tools
 			Custom = false, CustomWords = {}, AfkRebirth = false,
 		}
+
+		-- Auto Merge ligado por botão rápido OU por "Merge Now" (uma rodada completa)
+		local mergeOnce = false
 
 		local function isPlayerChar(i) return i:IsA("Model") and Players:GetPlayerFromCharacter(i) ~= nil end
 		local function posOf(i)
@@ -2061,39 +2065,10 @@ RegisterGame({
 			return scan
 		end
 
-		-- Escolhe vários pares DISJUNTOS (cada unidade só aparece uma vez), sempre os mais próximos
-		local function pickPairs(maxN)
-			local sc = scanUnits()
-			local now = os.clock()
-			local out = {}
-			for _, list in pairs(sc.groups) do
-				local alive = {}
-				for _, u in ipairs(list) do
-					if u.Parent and (not cooldown[u] or cooldown[u] < now) then alive[#alive + 1] = u end
-				end
-				while #alive >= 2 and #out < maxN do
-					local a = table.remove(alive, 1)
-					local pa = unitPart(a)
-					local bi, bd
-					for i = 1, #alive do
-						local pb = unitPart(alive[i])
-						if pa and pb then
-							local d = (pa.Position - pb.Position).Magnitude
-							if not bd or d < bd then bi, bd = i, d end
-						elseif not bi then
-							bi = i
-						end
-					end
-					local b = table.remove(alive, bi)
-					out[#out + 1] = {a, b}
-				end
-				if #out >= maxN then break end
-			end
-			return out
-		end
-
 		-- ======================================================
-		-- C) EXECUÇÃO DO MERGE (sem teleporte)
+		-- C) EXECUÇÃO DO MERGE (anda de verdade, SEM teleporte)
+		--    1) remote aprendido (se existir, não precisa andar)
+		--    2) andar até a unidade A, depois até a B
 		-- ======================================================
 		local learned = env.__ShadowMiniLearn
 		local recording, captured = false, nil
@@ -2121,23 +2096,17 @@ RegisterGame({
 			end
 		end
 
-		-- Toque virtual: não move o seu personagem
-		local function touchPair(a, b)
-			local pa, pb = unitPart(a), unitPart(b)
-			if not (pa and pb) then return end
-			if cfg.Drag then pcall(function() a:PivotTo(CFrame.new(pb.Position)) end) end
+		-- Toca a unidade (sem mover o personagem): complemento ao andar
+		local function touchUnit(u)
+			local p, root = unitPart(u), getRoot()
+			if not (p and root) then return end
 			if firetouchinterest then
-				local root = getRoot()
 				pcall(function()
-					if root then
-						firetouchinterest(root, pa, 0); firetouchinterest(root, pa, 1)
-						firetouchinterest(root, pb, 0); firetouchinterest(root, pb, 1)
-					end
-					firetouchinterest(pa, pb, 0); firetouchinterest(pa, pb, 1)
+					firetouchinterest(root, p, 0)
+					firetouchinterest(root, p, 1)
 				end)
 			end
-			firePrompts(a)
-			firePrompts(b)
+			firePrompts(u)
 		end
 
 		local function fireLearned(a, b)
@@ -2160,66 +2129,153 @@ RegisterGame({
 			return true
 		end
 
-		-- Fallback opcional: vai até a unidade, toca e VOLTA na hora
-		local function teleportMerge(a, b)
+		-- Detecta se VOCÊ está controlando o personagem (teclado / joystick / setas)
+		local MOVE_KEYS = {Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D,
+			Enum.KeyCode.Up, Enum.KeyCode.Down, Enum.KeyCode.Left, Enum.KeyCode.Right}
+		local function userIsMoving()
+			if Mv.controls then
+				local ok, v = pcall(function() return Mv.controls:GetMoveVector() end)
+				if ok and v and v.Magnitude > 0.1 then return true end
+			end
+			for _, k in ipairs(MOVE_KEYS) do
+				if UserInputService:IsKeyDown(k) then return true end
+			end
+			return false
+		end
+
+		local function mergeActive()
+			return running and ctx.ScreenGui.Parent ~= nil and (cfg.Merge or mergeOnce)
+		end
+
+		local function stopWalk()
+			local hum, root = getHum(), getRoot()
+			if hum and root then pcall(function() hum:MoveTo(root.Position) end) end
+		end
+
+		-- Anda até uma posição com o próprio personagem (caminhada normal, sem CFrame/teleporte)
+		-- Retorna: "arrived", "timeout", "user" (você assumiu), "stop" (desligou / morreu)
+		local function walkTo(pos, timeout)
+			local root, hum = getRoot(), getHum()
+			if not (root and hum) or State.Fly then return "stop" end
+			hum:MoveTo(pos)
+			local t0 = os.clock()
+			local last, stuckAt = root.Position, os.clock()
+			while mergeActive() do
+				if userIsMoving() then
+					stopWalk()
+					return "user"
+				end
+				root, hum = getRoot(), getHum()
+				if not (root and hum) then return "stop" end
+				local cur = root.Position
+				local flat = Vector3.new(cur.X - pos.X, 0, cur.Z - pos.Z).Magnitude
+				if flat <= 3.5 then
+					stopWalk()
+					return "arrived"
+				end
+				if os.clock() - t0 > timeout then
+					stopWalk()
+					return "timeout"
+				end
+				if (cur - last).Magnitude > 0.35 then
+					last, stuckAt = cur, os.clock()
+				elseif os.clock() - stuckAt > 0.9 then
+					-- travou em algo: pula e tenta de novo
+					hum.Jump = true
+					hum:MoveTo(pos)
+					stuckAt = os.clock()
+				end
+				task.wait(0.1)
+			end
+			stopWalk()
+			return "stop"
+		end
+
+		-- Par mais próximo de você (pares disponíveis, sem cooldown)
+		local function nearestPair()
+			local sc = scanUnits()
 			local root = getRoot()
-			if not root then return end
-			local back = root.CFrame
-			for _, u in ipairs({a, b}) do
-				local p = unitPart(u)
-				if p and p.Parent then
-					root.CFrame = CFrame.new(p.Position + Vector3.new(0, 1.5, 0))
-					root.AssemblyLinearVelocity = Vector3.zero
-					if firetouchinterest then
-						pcall(function() firetouchinterest(root, p, 0); firetouchinterest(root, p, 1) end)
-					end
-					firePrompts(u)
-					task.wait(0.06)
-				end
-			end
-			root.CFrame = back
-			root.AssemblyLinearVelocity = Vector3.zero
-		end
-
-		local function fireOne(a, b)
-			local used = false
-			if cfg.UseRemote and learned and not learned.direct and #learned.inst >= 1 then
-				used = fireLearned(a, b)
-			end
-			if not used then touchPair(a, b) end
-		end
-
-		-- Dispara um lote, espera um instante e CONFERE o resultado de cada par
-		local function runBatch(list)
-			local keys = {}
-			for i, p in ipairs(list) do
-				keys[i] = unitKey(p[1])
-				fireOne(p[1], p[2])
-			end
-			task.wait(0.3)
 			local now = os.clock()
-			local retry
-			for i, p in ipairs(list) do
-				local a, b = p[1], p[2]
-				local merged = (not a.Parent) or (not b.Parent) or (unitKey(a) ~= keys[i])
-				if merged then
-					stats.merges = stats.merges + 1
-					failCount[a], failCount[b] = nil, nil
-				else
-					local n = (failCount[a] or 0) + 1
-					failCount[a], failCount[b] = n, n
-					local t = now + math.min(1.5 * n, 10)
-					cooldown[a], cooldown[b] = t, t
-					stats.fails = stats.fails + 1
-					if n >= 3 and cfg.Walk and not retry then retry = p end
+			local bestA, bestB, bestScore
+			for _, list in pairs(sc.groups) do
+				local n = #list
+				for i = 1, n do
+					local a = list[i]
+					local pa = unitPart(a)
+					if pa and a.Parent and (not cooldown[a] or cooldown[a] < now) then
+						for j = i + 1, n do
+							local b = list[j]
+							local pb = unitPart(b)
+							if pb and b.Parent and (not cooldown[b] or cooldown[b] < now) then
+								local score = (pa.Position - pb.Position).Magnitude
+								if root then score = score + (pa.Position - root.Position).Magnitude * 0.5 end
+								if not bestScore or score < bestScore then
+									bestA, bestB, bestScore = a, b, score
+								end
+							end
+						end
+					end
 				end
 			end
-			if retry then teleportMerge(retry[1], retry[2]) end
-			scan.t = 0
+			if bestA then return {bestA, bestB} end
+			return nil
+		end
+
+		local function isMerged(a, b, keyA, keyB)
+			return (not a.Parent) or (not b.Parent) or unitKey(a) ~= keyA or unitKey(b) ~= keyB
+		end
+
+		local function markOk(a, b)
+			stats.merges = stats.merges + 1
+			failCount[a], failCount[b] = nil, nil
+		end
+
+		local function markFail(a, b)
+			local n = (failCount[a] or 0) + 1
+			failCount[a], failCount[b] = n, n
+			local t = os.clock() + math.min(2 * n, 12)
+			cooldown[a], cooldown[b] = t, t
+			stats.fails = stats.fails + 1
+		end
+
+		local function mergeOnePair(a, b)
+			local pa, pb = unitPart(a), unitPart(b)
+			if not (pa and pb) then return end
+			local keyA, keyB = unitKey(a), unitKey(b)
+
+			if cfg.Drag then pcall(function() a:PivotTo(CFrame.new(pb.Position)) end) end
+
+			-- 1) remote aprendido (sem andar)
+			if cfg.UseRemote and learned and learned.remote and learned.remote.Parent and not learned.direct then
+				fireLearned(a, b)
+				task.wait(0.4)
+				if isMerged(a, b, keyA, keyB) then
+					markOk(a, b)
+					return
+				end
+			end
+
+			-- 2) anda até a primeira unidade, depois até a segunda
+			local status = walkTo(pa.Position, cfg.WalkTimeout)
+			if status == "arrived" then
+				touchUnit(a)
+				task.wait(0.3)
+				status = walkTo(pb.Position, cfg.WalkTimeout)
+				if status == "arrived" then
+					touchUnit(b)
+					task.wait(0.5)
+				end
+			end
+
+			if status == "arrived" then
+				if isMerged(a, b, keyA, keyB) then markOk(a, b) else markFail(a, b) end
+			elseif status == "timeout" then
+				markFail(a, b)
+			end
+			-- "user" / "stop": não conta como falha, só pausa
 		end
 
 		-- Loop do Auto Merge
-		local mergeOnce = false
 		task.spawn(function()
 			while running and ctx.ScreenGui.Parent do
 				if cfg.Merge or mergeOnce then
@@ -2233,15 +2289,19 @@ RegisterGame({
 								mergeOnce = false
 							end
 							task.wait(math.max(cfg.MergeDelay, Perf.Lite and 0.4 or 0.1))
+						elseif userIsMoving() then
+							-- Você está andando: o personagem fica livre (merges acontecem ao passar por cima)
+							task.wait(0.2)
 						else
-							local list = pickPairs(cfg.Batch)
-							if #list > 0 then
-								local ok, err = pcall(runBatch, list)
+							local pair = nearestPair()
+							if pair then
+								local ok, err = pcall(mergeOnePair, pair[1], pair[2])
 								if not ok then warn("[ShadowHub] merge: " .. tostring(err)) end
-								task.wait(math.max(cfg.MergeDelay, Perf.Lite and 0.3 or 0.03))
+								scan.t = 0
+								task.wait(math.max(cfg.MergeDelay, Perf.Lite and 0.3 or 0.05))
 							else
 								mergeOnce = false
-								task.wait(0.35)
+								task.wait(0.4)
 							end
 						end
 					else
@@ -2281,7 +2341,7 @@ RegisterGame({
 		local function startLearning(seconds, quiet)
 			if recording then return end
 			if not installHook() then
-				if not quiet then ctx.Notify("Learn", "Executor lacks hookmetamethod. Touch mode still works", 5) end
+				if not quiet then ctx.Notify("Learn", "Executor lacks hookmetamethod. Walk mode still works", 5) end
 				return
 			end
 			if not ensureBase(quiet) then return end
@@ -2321,7 +2381,6 @@ RegisterGame({
 		}
 		local BLOCK_HARD = {"robux", "r$", "gamepass", "game pass", "premium", "gift", "donat", "purchase", "vip"}
 		local BOOST = {"x2", "2x", "x3", "3x", "x4", "4x"}
-		local CONFIRM = {"confirm", "yes"}
 		local VIM
 		pcall(function() VIM = game:GetService("VirtualInputManager") end)
 
@@ -2357,7 +2416,9 @@ RegisterGame({
 			info.text, info.t = t, now
 			info.block = hasAny(t, BLOCK_HARD)
 			info.boost = hasAny(t, BOOST)
-			info.confirm = hasAny(t, CONFIRM)
+			-- Confirmação: só o TEXTO do próprio botão (evita clicar em "eyes", "yesterday" etc.)
+			local own = string.lower(b:IsA("TextButton") and b.Text or "")
+			info.confirm = (own == "yes" or own == "confirm" or own == "ok" or string.find(own, "confirm", 1, true) ~= nil)
 			info.cat = nil
 			for _, cat in ipairs(CATS) do
 				if hasAny(t, cat.words) then info.cat = cat break end
@@ -2449,11 +2510,15 @@ RegisterGame({
 			return n
 		end
 
+		-- Categorias que rodam em silêncio total (sem nenhuma mensagem na tela)
+		local QUIET_KEYS = {Rebirth = true, Upgrade = true}
+
 		local function clickNow(key)
 			ensureButtonTracking()
 			local waited = 0
 			while not scanDone and waited < 3 do task.wait(0.1); waited = waited + 0.1 end
 			local n = clickCategory({[key] = true}, os.clock(), key == "Rebirth")
+			if QUIET_KEYS[key] then return end
 			ctx.Notify(key, n > 0 and (n .. " click(s)") or (cfg.Silent and "No matching button found" or "No visible button. Open the menu in the game"), 3)
 		end
 
@@ -2733,25 +2798,27 @@ RegisterGame({
 			end)
 		end
 
-		-- ---------- QUICK (painel principal: liga e anda livre) ----------
+		-- ---------- QUICK (painel principal: liga e anda normalmente) ----------
 		local pq = ctx.Page("Quick", ctx.Icons.Bolt)
 		do
 			local qs = pq.Section("Main Automation")
-			ctl.Merge = AddToggle(qs, "Auto Merge", "No teleport. Merges equal units in your base", false, function(on)
+			ctl.Merge = AddToggle(qs, "Auto Merge", "Walks (no teleport) to equal units in your base", false, function(on)
 				cfg.Merge = on
 				if on then
 					ensureBase()
 					if cfg.AutoLearn and not learned then startLearning(600, true) end
 				end
 			end)
+			-- quiet = true: Auto Upgrade não mostra pop-up nem toca som
 			ctl.Upgrade = AddToggle(qs, "Auto Upgrade", "Silent. No menu opens on your screen", false, function(on)
 				cfg.Upgrade = on
 				if on then ensureButtonTracking() end
-			end)
+			end, true)
+			-- quiet = true: Auto Rebirth não mostra pop-up nem toca som
 			ctl.Rebirth = AddToggle(qs, "Auto Rebirth", "Silent. Careful: resets your progress", false, function(on)
 				cfg.Rebirth = on
 				if on then ensureButtonTracking() end
-			end)
+			end, true)
 			simple(qs, "Collect", "Auto Collect / Claim", "Silent claim of rewards")
 			simple(qs, "Buy", "Auto Buy / Spawn Units", "Silent buy and spawn")
 
@@ -2760,7 +2827,7 @@ RegisterGame({
 			Refs.qPairs  = AddInfo(qi, "Pairs ready", "0")
 			Refs.qMerges = AddInfo(qi, "Merges done", "0")
 			Refs.qClicks = AddInfo(qi, "Silent clicks", "0")
-			AddText(qi, "Ligue e ande livremente: o merge acontece sozinho, sem teleporte. Rebirth e Upgrade clicam por trás, sem abrir nada na tela. Dica: faça 1 merge à mão com o Auto Merge ligado e o script aprende o comando real (fica ainda mais rápido e certeiro).")
+			AddText(qi, "Ligue Auto Merge e ande normalmente: o personagem anda sozinho até os pares da sua base (sem teleporte). Se você mexer no movimento, ele pausa e retoma quando você parar. Rebirth e Upgrade clicam por trás, sem nada aparecer na tela.")
 		end
 
 		-- ---------- MERGE ----------
@@ -2794,7 +2861,7 @@ RegisterGame({
 
 			local am = pm.Section("Auto Merge")
 			AddSlider(am, "Merge delay", 0.03, 1.5, cfg.MergeDelay, 0.01, "s", function(v) cfg.MergeDelay = v end)
-			AddSlider(am, "Pairs per cycle", 1, 6, cfg.Batch, 1, "", function(v) cfg.Batch = v end)
+			AddSlider(am, "Walk timeout", 4, 20, cfg.WalkTimeout, 1, "s", function(v) cfg.WalkTimeout = v end)
 			AddButton(am, "Merge Now", function()
 				if ensureBase() then mergeOnce = true else ctx.Notify("Merge", "Set your base first", 3) end
 			end)
@@ -2830,7 +2897,6 @@ RegisterGame({
 				env.__ShadowMiniLearn = nil
 				Refs.mRemote.Text = "None"
 			end)
-			AddToggle(mm, "Teleport fallback", "Only if a pair fails 3x. Goes there and returns", false, function(on) cfg.Walk = on end)
 			AddToggle(mm, "Drag unit onto target", "Experimental: moves unit A onto unit B", false, function(on) cfg.Drag = on end)
 			AddInput(mm, "Unit names (optional)", "ex: soldier, tank", "", function(text)
 				cfg.UnitWords = splitWords(text)
@@ -2857,7 +2923,7 @@ RegisterGame({
 			local rb = pe.Section("Auto Rebirth")
 			AddSlider(rb, "Rebirth delay", 1, 300, cfg.RebirthEvery, 1, "s", function(v) cfg.RebirthEvery = v end)
 			AddButton(rb, "Rebirth Now", function() clickNow("Rebirth") end)
-			AddText(rb, "Ligue Auto Upgrade e Auto Rebirth na aba Quick. Depois do clique em Rebirth o script também confirma o diálogo (Confirm / Yes).")
+			AddText(rb, "Ligue Auto Upgrade e Auto Rebirth na aba Quick. Eles rodam em silêncio. Depois do clique em Rebirth o script também confirma o diálogo (Confirm / Yes).")
 
 			local sl = pe.Section("Silent Mode")
 			AddToggle(sl, "Silent clicks", "Works with the game menu closed", true, function(on) cfg.Silent = on end)
@@ -3044,9 +3110,11 @@ RegisterGame({
 		ctx.OnUnload(function()
 			running = false
 			recording = false
+			mergeOnce = false
 			env.__ShadowHookFn = nil
 			for _, k in ipairs(DUE_KEYS) do cfg[k] = false end
 			cfg.Merge, cfg.Attack, cfg.AutoCapture = false, false, false
+			stopWalk()
 			restoreInstant()
 		end)
 	end,
