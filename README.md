@@ -1,14 +1,14 @@
 -- ================================================================= --
---   DARK SHADOW HUB v4.2  |  LUXURY EDITION                          --
---   Merge a Mini Army: Auto Merge ANDANDO (sem teleporte),           --
---   Auto Rebirth / Upgrade silenciosos, efeitos sonoros com volume,  --
---   scripts por jogo (só aparecem no jogo certo), Anti-Lag e Mobile. --
+--   DARK SHADOW HUB v5.0  |  COSMIC EDITION                          --
+--   Tema espacial (azul elétrico + relâmpago), estrelas, planeta,    --
+--   Auto Merge "carrega e junta" com CLONE FANTASMA invisível,       --
+--   Auto Rebirth / Upgrade silenciosos, sons, scripts por jogo.      --
 -- ================================================================= --
 --  ÍNDICE
 --   1. Serviços e ambiente
 --   2. Utilitários, tema e sons
 --   3. Estado global
---   4. Interface base (janela, sidebar, header)
+--   4. Interface base (janela, estrelas, sidebar, header)
 --   5. Framework de abas e sub-abas
 --   6. Notificações
 --   7. Componentes
@@ -17,7 +17,8 @@
 --  10. Abas: Home / Player / Main / Settings
 --  11. Sistema de scripts por jogo
 --  12. Jogo: Merge a Mini Army
---  13. Loops, abrir/fechar, arraste, unload, inicialização
+--  13. Jogo: Blox Fruits
+--  14. Loops, abrir/fechar, arraste, unload, inicialização
 -- ================================================================= --
 
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -69,23 +70,26 @@ local function corner(inst, r)
 	return create("UICorner", {CornerRadius = UDim.new(0, r), Parent = inst})
 end
 
+-- Paleta tirada da imagem: preto-azulado profundo, azul elétrico, relâmpago branco-azulado
 local COLORS = {
-	Background   = Color3.fromRGB(15, 10, 18),
-	Sidebar      = Color3.fromRGB(22, 14, 26),
-	Card         = Color3.fromRGB(26, 17, 30),
-	CardHeader   = Color3.fromRGB(36, 23, 42),
-	CardHover    = Color3.fromRGB(46, 29, 54),
-	SubTabBg     = Color3.fromRGB(30, 18, 35),
-	SubTabActive = Color3.fromRGB(48, 28, 56),
-	Accent       = Color3.fromRGB(230, 75, 150),
-	AccentDark   = Color3.fromRGB(180, 50, 110),
-	AccentGlow   = Color3.fromRGB(255, 110, 180),
-	TextMain     = Color3.fromRGB(245, 240, 250),
-	TextDark     = Color3.fromRGB(140, 125, 150),
-	Stroke       = Color3.fromRGB(48, 30, 56),
-	SwitchOff    = Color3.fromRGB(45, 30, 52),
-	Green        = Color3.fromRGB(80, 220, 120),
-	Danger       = Color3.fromRGB(200, 60, 80),
+	Background   = Color3.fromRGB(3, 5, 16),
+	Sidebar      = Color3.fromRGB(4, 8, 24),
+	Card         = Color3.fromRGB(7, 12, 36),
+	CardHeader   = Color3.fromRGB(11, 20, 62),
+	CardHover    = Color3.fromRGB(18, 34, 96),
+	SubTabBg     = Color3.fromRGB(8, 14, 42),
+	SubTabActive = Color3.fromRGB(14, 36, 112),
+	Accent       = Color3.fromRGB(24, 78, 255),
+	AccentDark   = Color3.fromRGB(8, 38, 190),
+	AccentGlow   = Color3.fromRGB(80, 150, 255),
+	Cyan         = Color3.fromRGB(110, 215, 255),
+	Star         = Color3.fromRGB(205, 228, 255),
+	TextMain     = Color3.fromRGB(226, 238, 255),
+	TextDark     = Color3.fromRGB(108, 134, 190),
+	Stroke       = Color3.fromRGB(16, 32, 98),
+	SwitchOff    = Color3.fromRGB(14, 22, 62),
+	Green        = Color3.fromRGB(80, 220, 140),
+	Danger       = Color3.fromRGB(200, 60, 90),
 	Gold         = Color3.fromRGB(255, 205, 60),
 }
 
@@ -173,15 +177,13 @@ local ICONS = {
 }
 
 -- EFEITOS SONOROS
--- Um único som base com tons diferentes (grave = desligar/erro, agudo = ligar/aviso).
--- Se quiser outro som, troque só o Id abaixo. O volume é ajustado em Settings > Sound.
 local Sfx = {
 	Enabled = true,
 	Volume  = 0.5,
 	Id      = "rbxassetid://6895079853",
 	pool    = {},
 	last    = {},
-	holder  = nil, -- definido depois que a ScreenGui existe
+	holder  = nil,
 }
 local SFX_KINDS = {            -- {tom, ganho}
 	Click  = {1.00, 1.0},
@@ -238,7 +240,7 @@ local State = {
 	FovOn = false, Fov = 70,
 	AntiAfk = false, LowGfx = false,
 	NoRender = false, AutoRejoin = false,
-	Snow = not IS_TOUCH,
+	Stars = true,
 }
 local Original = {}
 
@@ -272,46 +274,20 @@ local InputBlocker = create("TextButton", {
 	Text = "", Visible = false, Modal = true, ZIndex = 1, Parent = ScreenGui,
 })
 
--- Neve (leve, só com o menu aberto e sem Lite)
-local SnowContainer = create("Frame", {
-	Name = "SnowContainer", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
-	ClipsDescendants = true, Visible = false, ZIndex = 1, Parent = ScreenGui,
-})
-local updateSnow
-do
-	local flakes = {}
-	for i = 1, (IS_TOUCH and 14 or 26) do
-		local size = math.random(3, 7)
-		local frame = create("Frame", {
-			Size = UDim2.fromOffset(size, size), BackgroundColor3 = Color3.fromRGB(255, 230, 245),
-			BackgroundTransparency = math.random(15, 50) / 100, BorderSizePixel = 0, Parent = SnowContainer,
-		})
-		corner(frame, 8)
-		flakes[i] = {frame = frame, x = math.random(), y = math.random(),
-			speed = math.random(80, 220) / 1000, drift = math.random(10, 40) / 10, seed = math.random(1, 100)}
-	end
-	updateSnow = function(dt)
-		local now = os.clock()
-		for i = 1, #flakes do
-			local f = flakes[i]
-			f.y = f.y + f.speed * dt
-			f.x = (f.x + math.sin(now * f.drift + f.seed) * 0.015 * dt) % 1
-			if f.y > 1.05 then f.y = -0.05; f.x = math.random() end
-			f.frame.Position = UDim2.fromScale(f.x, f.y)
-		end
-	end
-end
-
--- Botão flutuante (pulsa de leve para chamar atenção)
+-- Botão flutuante (anel azul pulsante)
 local FloatingBtn = create("Frame", {
 	Name = "FloatingButton", Size = UDim2.fromOffset(48, 48), Position = UDim2.new(0, 16, 0.3, 0),
 	BackgroundColor3 = COLORS.Sidebar, BorderSizePixel = 0, Active = true, ZIndex = 10, Parent = ScreenGui,
 })
-corner(FloatingBtn, 14)
-local BtnStroke = stroke(FloatingBtn, COLORS.Accent, 1.5, 0.3)
+corner(FloatingBtn, 24)
+local BtnStroke = stroke(FloatingBtn, COLORS.AccentGlow, 1.5, 0.2)
+create("UIGradient", {
+	Color = ColorSequence.new(Color3.fromRGB(14, 30, 100), Color3.fromRGB(2, 5, 20)),
+	Rotation = 90, Parent = FloatingBtn,
+})
 create("ImageLabel", {
 	Size = UDim2.fromOffset(24, 24), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
-	BackgroundTransparency = 1, Image = ICONS.Logo, ImageColor3 = COLORS.Accent, Parent = FloatingBtn,
+	BackgroundTransparency = 1, Image = ICONS.Logo, ImageColor3 = COLORS.Cyan, Parent = FloatingBtn,
 })
 pcall(function()
 	TweenService:Create(BtnStroke, TweenInfo.new(1.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
@@ -329,8 +305,112 @@ local MainFrame = create("CanvasGroup", {
 	ZIndex = 5, GroupTransparency = 1, Parent = ScreenGui,
 })
 corner(MainFrame, 16)
-stroke(MainFrame, COLORS.Stroke, 1.2)
+create("UIGradient", {
+	Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(150, 185, 255)),
+	}),
+	Rotation = 90, Parent = MainFrame,
+})
+-- Borda com degradê azul → ciano que gira devagar (efeito de energia)
+do
+	local ms = stroke(MainFrame, COLORS.AccentGlow, 1.6, 0.25)
+	local g = create("UIGradient", {
+		Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, COLORS.AccentDark),
+			ColorSequenceKeypoint.new(0.35, COLORS.Cyan),
+			ColorSequenceKeypoint.new(0.7, COLORS.Accent),
+			ColorSequenceKeypoint.new(1, COLORS.AccentDark),
+		}),
+		Parent = ms,
+	})
+	pcall(function()
+		TweenService:Create(g, TweenInfo.new(7, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1), {Rotation = 360}):Play()
+	end)
+end
 local HubScale = create("UIScale", {Scale = 1, Parent = MainFrame})
+
+-- Céu estrelado dentro da janela (atrás de tudo): estrelas, nebulosas, planeta e estrela cadente
+local StarContainer = create("Frame", {
+	Name = "StarContainer", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
+	ClipsDescendants = true, Visible = true, ZIndex = 0, Parent = MainFrame,
+})
+local updateStars
+do
+	-- nebulosas (camadas translúcidas simulam brilho)
+	local function glow(xs, ys, size)
+		for i = 1, 3 do
+			local s = size * (1 - (i - 1) * 0.28)
+			local f = create("Frame", {
+				AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(xs, ys),
+				Size = UDim2.fromOffset(s, s), BackgroundColor3 = i == 3 and COLORS.AccentGlow or COLORS.Accent,
+				BackgroundTransparency = 0.93 - i * 0.012, BorderSizePixel = 0, ZIndex = 0, Parent = StarContainer,
+			})
+			corner(f, 500)
+		end
+	end
+	glow(0.35, 0.18, 300)
+	glow(0.85, 0.7, 340)
+	glow(0.5, 0.95, 260)
+
+	-- planeta com anel (como o pequeno planeta da imagem)
+	local planet = create("Frame", {
+		AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -22, 1, -16), Size = UDim2.fromOffset(54, 54),
+		BackgroundColor3 = COLORS.Accent, BackgroundTransparency = 0.25, BorderSizePixel = 0, ZIndex = 0, Parent = StarContainer,
+	})
+	corner(planet, 27)
+	create("UIGradient", {
+		Color = ColorSequence.new(COLORS.Cyan, Color3.fromRGB(4, 10, 50)), Rotation = 45, Parent = planet,
+	})
+	local ring = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(100, 22),
+		BackgroundTransparency = 1, Rotation = -18, ZIndex = 0, Parent = planet,
+	})
+	corner(ring, 20)
+	stroke(ring, COLORS.Cyan, 1.5, 0.35)
+
+	-- estrelas
+	local stars = {}
+	for i = 1, (IS_TOUCH and 28 or 52) do
+		local size = (math.random() < 0.15) and 3 or math.random(1, 2)
+		local frame = create("Frame", {
+			Size = UDim2.fromOffset(size, size), BackgroundColor3 = (math.random() < 0.3) and COLORS.Cyan or COLORS.Star,
+			BackgroundTransparency = 0.4, BorderSizePixel = 0, ZIndex = 0, Parent = StarContainer,
+		})
+		corner(frame, 3)
+		stars[i] = {frame = frame, x = math.random(), y = math.random(),
+			speed = math.random(2, 9) / 1000, tw = math.random(10, 40) / 10, seed = math.random(1, 100)}
+	end
+	updateStars = function(dt)
+		local now = os.clock()
+		for i = 1, #stars do
+			local s = stars[i]
+			s.x = (s.x - s.speed * dt) % 1
+			s.frame.Position = UDim2.fromScale(s.x, s.y)
+			s.frame.BackgroundTransparency = 0.15 + 0.7 * math.abs(math.sin(now * s.tw + s.seed))
+		end
+	end
+
+	-- estrela cadente de vez em quando
+	task.spawn(function()
+		while ScreenGui.Parent do
+			task.wait(math.random(40, 90) / 10)
+			if isOpen and State.Stars and not Perf.Lite then
+				local streak = create("Frame", {
+					Size = UDim2.fromOffset(70, 2), Rotation = 28, BackgroundColor3 = COLORS.Star, BorderSizePixel = 0,
+					Position = UDim2.fromScale(math.random(30, 90) / 100, -0.05), ZIndex = 0, Parent = StarContainer,
+				})
+				create("UIGradient", {
+					Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0)}),
+					Parent = streak,
+				})
+				local sx = streak.Position.X.Scale
+				tween(streak, 0.9, {Position = UDim2.fromScale(sx - 0.45, 0.6), BackgroundTransparency = 1}, Enum.EasingStyle.Quad)
+				task.delay(1, function() streak:Destroy() end)
+			end
+		end
+	end)
+end
 
 local DragGhost = create("Frame", {
 	Name = "DragGhost", AnchorPoint = Vector2.new(0.5, 0.5), Visible = false, BackgroundTransparency = 0.85,
@@ -359,25 +439,42 @@ end
 local Sidebar, TabsContainer, AvatarImg
 do
 	Sidebar = create("Frame", {
-		Size = UDim2.new(0, SIDEBAR_W, 1, 0), BackgroundColor3 = COLORS.Sidebar,
+		Size = UDim2.new(0, SIDEBAR_W, 1, 0), BackgroundColor3 = COLORS.Sidebar, BackgroundTransparency = 0.12,
 		BorderSizePixel = 0, Active = true, Parent = MainFrame,
 	})
-	create("Frame", {
-		AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromScale(1, 0), Size = UDim2.new(0, 1, 1, 0),
-		BackgroundColor3 = COLORS.Stroke, BorderSizePixel = 0, Parent = Sidebar,
+	-- "relâmpago" vertical na borda da sidebar
+	local bolt = create("Frame", {
+		AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromScale(1, 0), Size = UDim2.new(0, 2, 1, 0),
+		BackgroundColor3 = COLORS.Cyan, BorderSizePixel = 0, Parent = Sidebar,
 	})
+	local bg = create("UIGradient", {
+		Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, COLORS.AccentDark),
+			ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
+			ColorSequenceKeypoint.new(1, COLORS.AccentDark),
+		}),
+		Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.95), NumberSequenceKeypoint.new(0.5, 0.05), NumberSequenceKeypoint.new(1, 0.95),
+		}),
+		Rotation = 90, Offset = Vector2.new(0, -1), Parent = bolt,
+	})
+	pcall(function()
+		TweenService:Create(bg, TweenInfo.new(2.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+			{Offset = Vector2.new(0, 1)}):Play()
+	end)
+
 	local logo = create("Frame", {Size = UDim2.new(1, 0, 0, 56), BackgroundTransparency = 1, Parent = Sidebar})
 	create("ImageLabel", {
 		Size = UDim2.fromOffset(26, 26), Position = UDim2.new(0, 12, 0.5, -13),
-		BackgroundTransparency = 1, Image = ICONS.Logo, ImageColor3 = COLORS.Accent, Parent = logo,
+		BackgroundTransparency = 1, Image = ICONS.Logo, ImageColor3 = COLORS.Cyan, Parent = logo,
 	})
 	local title = label({Size = UDim2.new(1, -46, 0, 16), Position = UDim2.new(0, 44, 0.5, -15), Text = "DARK SHADOW",
 		Font = Enum.Font.GothamBlack, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Parent = logo})
 	create("UIGradient", {
 		Color = ColorSequence.new(COLORS.TextMain, COLORS.AccentGlow), Parent = title,
 	})
-	label({Size = UDim2.new(1, -46, 0, 12), Position = UDim2.new(0, 44, 0.5, 2), Text = "HUB  v4.2",
-		TextSize = 10, TextColor3 = COLORS.Accent, Parent = logo})
+	label({Size = UDim2.new(1, -46, 0, 12), Position = UDim2.new(0, 44, 0.5, 2), Text = "✦ COSMIC  v5.0",
+		TextSize = 10, TextColor3 = COLORS.AccentGlow, Parent = logo})
 
 	TabsContainer = create("ScrollingFrame", {
 		Size = UDim2.new(1, -16, 1, -128), Position = UDim2.new(0, 8, 0, 60),
@@ -395,6 +492,7 @@ do
 	})
 	AvatarImg = create("ImageLabel", {Size = UDim2.fromScale(1, 1), BackgroundColor3 = COLORS.Card, Parent = avFrame})
 	corner(AvatarImg, 17)
+	stroke(AvatarImg, COLORS.AccentGlow, 1.2, 0.3)
 	local dot = create("Frame", {
 		Size = UDim2.fromOffset(10, 10), Position = UDim2.new(1, -8, 1, -8),
 		BackgroundColor3 = COLORS.Green, BorderSizePixel = 0, ZIndex = 3, Parent = avFrame,
@@ -420,7 +518,7 @@ do
 	})
 	HeaderIcon = create("ImageLabel", {
 		Size = UDim2.fromOffset(20, 20), Position = UDim2.new(0, 4, 0.5, -10),
-		BackgroundTransparency = 1, ImageColor3 = COLORS.Accent, Image = ICONS.Home, Parent = TopHeader,
+		BackgroundTransparency = 1, ImageColor3 = COLORS.Cyan, Image = ICONS.Home, Parent = TopHeader,
 	})
 	HeaderTitle = label({
 		Size = UDim2.new(0, 110, 1, 0), Position = UDim2.new(0, 30, 0, 0), Text = "Home",
@@ -451,27 +549,31 @@ do
 		TextSize = 11, Font = Enum.Font.GothamMedium, TextXAlignment = Enum.TextXAlignment.Left,
 		ClearTextOnFocus = false, Parent = sf,
 	})
-	SearchBox.Focused:Connect(function() tween(ss, 0.2, {Color = COLORS.Accent}) end)
+	SearchBox.Focused:Connect(function() tween(ss, 0.2, {Color = COLORS.AccentGlow}) end)
 	SearchBox.FocusLost:Connect(function() tween(ss, 0.2, {Color = COLORS.Stroke}) end)
 
-	-- Linha de destaque com degradê abaixo do cabeçalho
+	-- Linha "relâmpago" com brilho que corre pelo cabeçalho
 	local accentLine = create("Frame", {
 		Size = UDim2.new(1, -20, 0, 2), Position = UDim2.new(0, 10, 0, 56),
 		BackgroundColor3 = COLORS.Accent, BorderSizePixel = 0, Parent = content,
 	})
-	create("UIGradient", {
+	local lg = create("UIGradient", {
 		Color = ColorSequence.new({
 			ColorSequenceKeypoint.new(0, COLORS.AccentDark),
-			ColorSequenceKeypoint.new(0.5, COLORS.AccentGlow),
+			ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
 			ColorSequenceKeypoint.new(1, COLORS.AccentDark),
 		}),
 		Transparency = NumberSequence.new({
 			NumberSequenceKeypoint.new(0, 0.9),
-			NumberSequenceKeypoint.new(0.5, 0.2),
+			NumberSequenceKeypoint.new(0.5, 0.05),
 			NumberSequenceKeypoint.new(1, 0.9),
 		}),
-		Parent = accentLine,
+		Offset = Vector2.new(-1, 0), Parent = accentLine,
 	})
+	pcall(function()
+		TweenService:Create(lg, TweenInfo.new(2.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+			{Offset = Vector2.new(1, 0)}):Play()
+	end)
 
 	PagesContainer = create("Frame", {
 		Size = UDim2.new(1, -20, 1, -68), Position = UDim2.new(0, 10, 0, 62), BackgroundTransparency = 1, Parent = content,
@@ -492,7 +594,7 @@ local ORDER = {Home = 10, Player = 20, Main = 30, Game = 40, Settings = 100}
 local function createScroll(parent)
 	local s = create("ScrollingFrame", {
 		Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0,
-		ScrollBarThickness = IS_TOUCH and 2 or 3, ScrollBarImageColor3 = COLORS.Accent,
+		ScrollBarThickness = IS_TOUCH and 2 or 3, ScrollBarImageColor3 = COLORS.AccentGlow,
 		AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
 		ScrollingDirection = Enum.ScrollingDirection.Y, Parent = parent,
 	})
@@ -509,8 +611,8 @@ local function setActiveTab(name)
 		t.Page.Visible = on
 		t.Line.Visible = on
 		t.Active = on
-		tween(t.Btn, 0.2, {BackgroundTransparency = on and 0.4 or 1})
-		tween(t.Icon, 0.2, {ImageColor3 = on and COLORS.Accent or COLORS.TextDark})
+		tween(t.Btn, 0.2, {BackgroundTransparency = on and 0.25 or 1})
+		tween(t.Icon, 0.2, {ImageColor3 = on and COLORS.Cyan or COLORS.TextDark})
 		tween(t.Label, 0.2, {TextColor3 = on and COLORS.TextMain or COLORS.TextDark})
 	end
 	HeaderTitle.Text = name
@@ -519,13 +621,13 @@ end
 
 local function createTab(name, iconId, useScroll, order)
 	local btn = create("TextButton", {
-		Size = UDim2.new(1, 0, 0, 38), BackgroundColor3 = COLORS.SubTabBg, BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 38), BackgroundColor3 = COLORS.SubTabActive, BackgroundTransparency = 1,
 		Text = "", AutoButtonColor = false, LayoutOrder = order or nextOrder(TabsContainer), Parent = TabsContainer,
 	})
 	corner(btn, 8)
 	local line = create("Frame", {
 		Size = UDim2.fromOffset(3, 18), Position = UDim2.new(0, 0, 0.5, -9),
-		BackgroundColor3 = COLORS.Accent, BorderSizePixel = 0, Visible = false, Parent = btn,
+		BackgroundColor3 = COLORS.Cyan, BorderSizePixel = 0, Visible = false, Parent = btn,
 	})
 	corner(line, 2)
 	local icon = create("ImageLabel", {
@@ -570,7 +672,7 @@ local function createSubGroup(tabName, page)
 			local on = (n == name)
 			s.Page.Visible = on
 			tween(s.Btn, 0.2, {BackgroundColor3 = on and COLORS.SubTabActive or COLORS.SubTabBg})
-			tween(s.Icon, 0.2, {ImageColor3 = on and COLORS.Accent or COLORS.TextDark})
+			tween(s.Icon, 0.2, {ImageColor3 = on and COLORS.Cyan or COLORS.TextDark})
 			tween(s.Label, 0.2, {TextColor3 = on and COLORS.TextMain or COLORS.TextDark})
 		end
 	end
@@ -581,6 +683,7 @@ local function createSubGroup(tabName, page)
 			AutoButtonColor = false, LayoutOrder = nextOrder(bar), Parent = bar,
 		})
 		corner(btn, 8)
+		stroke(btn, COLORS.Stroke, 1, 0.3)
 		local icon = create("ImageLabel", {
 			Size = UDim2.fromOffset(14, 14), Position = UDim2.new(0, 10, 0.5, -7),
 			BackgroundTransparency = 1, Image = iconId, ImageColor3 = COLORS.TextDark, Parent = btn,
@@ -631,9 +734,9 @@ do
 			BackgroundColor3 = COLORS.Card, BorderSizePixel = 0, Parent = wrapper,
 		})
 		corner(card, 10)
-		stroke(card, COLORS.Accent, 1, 0.5)
+		stroke(card, COLORS.AccentGlow, 1, 0.4)
 		local bar = create("Frame", {Size = UDim2.new(0, 3, 1, -16), Position = UDim2.new(0, 8, 0, 8),
-			BackgroundColor3 = COLORS.Accent, BorderSizePixel = 0, Parent = card})
+			BackgroundColor3 = COLORS.Cyan, BorderSizePixel = 0, Parent = card})
 		corner(bar, 2)
 		label({Size = UDim2.new(1, -28, 0, 16), Position = UDim2.new(0, 20, 0, 8), Text = title,
 			Font = Enum.Font.GothamBold, TextSize = 12, TextTruncate = Enum.TextTruncate.AtEnd, Parent = card})
@@ -664,14 +767,19 @@ end
 local function AddSection(parent, title, tab, sub)
 	local frame = create("Frame", {
 		Size = UDim2.new(1, -8, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundColor3 = COLORS.Card, BorderSizePixel = 0, LayoutOrder = nextOrder(parent), Parent = parent,
+		BackgroundColor3 = COLORS.Card, BackgroundTransparency = 0.08, BorderSizePixel = 0,
+		LayoutOrder = nextOrder(parent), Parent = parent,
 	})
 	corner(frame, 12)
 	stroke(frame, COLORS.Stroke, 1)
+	create("UIGradient", {
+		Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(170, 200, 255)),
+		Rotation = 90, Parent = frame,
+	})
 	create("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2), Parent = frame})
 	create("UIPadding", {PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 10), Parent = frame})
-	local header = label({Size = UDim2.new(1, 0, 0, 20), Text = string.upper(title), TextSize = 10,
-		Font = Enum.Font.GothamBold, TextColor3 = COLORS.Accent, LayoutOrder = nextOrder(frame), Parent = frame})
+	local header = label({Size = UDim2.new(1, 0, 0, 20), Text = "✦  " .. string.upper(title), TextSize = 10,
+		Font = Enum.Font.GothamBold, TextColor3 = COLORS.AccentGlow, LayoutOrder = nextOrder(frame), Parent = frame})
 	create("UIPadding", {PaddingLeft = UDim.new(0, 14), Parent = header})
 	local sec = {Frame = frame, Tab = tab, Sub = sub, Rows = {}}
 	if tab then table.insert(sections, sec) end
@@ -682,12 +790,11 @@ local function registerRow(sec, row, title)
 	table.insert(sec.Rows, {Frame = row, Title = string.lower(title)})
 end
 
--- quiet = true: sem som e sem pop-up ao ligar/desligar (usado por Auto Rebirth / Auto Upgrade)
+-- quiet = true: sem som e sem pop-up ao ligar/desligar
 local function AddToggle(sec, title, desc, default, callback, quiet)
 	local h = desc and 46 or 36
 	local row = create("Frame", {Size = UDim2.new(1, 0, 0, h), BackgroundTransparency = 1,
 		LayoutOrder = nextOrder(sec.Frame), Parent = sec.Frame})
-	-- Linha inteira clicável (melhor no toque)
 	local rowBtn = create("TextButton", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "",
 		AutoButtonColor = false, Parent = row})
 	label({Size = UDim2.new(1, -84, 0, desc and 20 or h), Position = UDim2.new(0, 14, 0, desc and 4 or 0),
@@ -701,6 +808,7 @@ local function AddToggle(sec, title, desc, default, callback, quiet)
 		BackgroundColor3 = default and COLORS.Accent or COLORS.SwitchOff, Parent = row,
 	})
 	corner(switch, 11)
+	local sstroke = stroke(switch, COLORS.AccentGlow, 1, default and 0.3 or 1)
 	local knob = create("Frame", {
 		Size = UDim2.fromOffset(16, 16),
 		Position = default and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8),
@@ -714,6 +822,7 @@ local function AddToggle(sec, title, desc, default, callback, quiet)
 		state = newState and true or false
 		tween(knob, 0.2, {Position = state and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8)})
 		tween(switch, 0.2, {BackgroundColor3 = state and COLORS.Accent or COLORS.SwitchOff})
+		tween(sstroke, 0.2, {Transparency = state and 0.3 or 1})
 		if not silent then
 			if not quiet then Sfx.Play(state and "On" or "Off") end
 			safeCall(callback, state)
@@ -750,9 +859,11 @@ local function AddSlider(sec, title, minVal, maxVal, default, step, unit, callba
 	local fill = create("Frame", {Size = UDim2.fromScale((default - minVal) / (maxVal - minVal), 1),
 		BackgroundColor3 = COLORS.Accent, BorderSizePixel = 0, Parent = trackBar})
 	corner(fill, 2)
+	create("UIGradient", {Color = ColorSequence.new(COLORS.AccentDark, COLORS.Cyan), Parent = fill})
 	local thumb = create("Frame", {Size = UDim2.fromOffset(12, 12), AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(1, 0.5), BackgroundColor3 = COLORS.AccentGlow, Parent = fill})
+		Position = UDim2.fromScale(1, 0.5), BackgroundColor3 = COLORS.TextMain, Parent = fill})
 	corner(thumb, 6)
+	stroke(thumb, COLORS.AccentGlow, 1.5, 0.2)
 
 	local last = default
 	local control = {}
@@ -809,14 +920,14 @@ local function AddButton(sec, title, callback, danger)
 	local row = create("Frame", {Size = UDim2.new(1, 0, 0, IS_TOUCH and 44 or 40), BackgroundTransparency = 1,
 		LayoutOrder = nextOrder(sec.Frame), Parent = sec.Frame})
 	local base = danger and COLORS.Danger or COLORS.CardHeader
-	local over = danger and Color3.fromRGB(225, 80, 100) or COLORS.CardHover
+	local over = danger and Color3.fromRGB(225, 80, 110) or COLORS.CardHover
 	local btn = create("TextButton", {
 		Size = UDim2.new(1, -28, 0, 34), Position = UDim2.new(0, 14, 0.5, -17), BackgroundColor3 = base,
 		Text = title, TextColor3 = COLORS.TextMain, TextSize = 12, Font = Enum.Font.GothamBold,
 		AutoButtonColor = false, Parent = row,
 	})
 	corner(btn, 8)
-	stroke(btn, danger and COLORS.Danger or COLORS.Stroke, 1)
+	stroke(btn, danger and COLORS.Danger or COLORS.AccentDark, 1, danger and 0 or 0.35)
 	btn.MouseEnter:Connect(function() tween(btn, 0.15, {BackgroundColor3 = over}) end)
 	btn.MouseLeave:Connect(function() tween(btn, 0.15, {BackgroundColor3 = base}) end)
 	btn.MouseButton1Down:Connect(function() tween(btn, 0.08, {Size = UDim2.new(1, -34, 0, 32)}) end)
@@ -846,7 +957,7 @@ local function AddInput(sec, title, placeholder, default, callback)
 		TextColor3 = COLORS.TextMain, TextSize = 11, Font = Enum.Font.GothamMedium,
 		TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, ClipsDescendants = true, Parent = boxFrame,
 	})
-	box.Focused:Connect(function() tween(bs, 0.2, {Color = COLORS.Accent}) end)
+	box.Focused:Connect(function() tween(bs, 0.2, {Color = COLORS.AccentGlow}) end)
 	box.FocusLost:Connect(function()
 		tween(bs, 0.2, {Color = COLORS.Stroke})
 		Sfx.Play("Click")
@@ -862,7 +973,7 @@ local function AddInfo(sec, title, value)
 	label({Size = UDim2.new(0.4, 0, 1, 0), Position = UDim2.new(0, 14, 0, 0), Text = title,
 		TextSize = 11, TextColor3 = COLORS.TextDark, TextTruncate = Enum.TextTruncate.AtEnd, Parent = row})
 	local val = label({Size = UDim2.new(0.6, -28, 1, 0), Position = UDim2.new(0.4, 0, 0, 0), Text = tostring(value),
-		TextSize = 11, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Right,
+		TextSize = 11, Font = Enum.Font.GothamBold, TextColor3 = COLORS.Star, TextXAlignment = Enum.TextXAlignment.Right,
 		TextTruncate = Enum.TextTruncate.AtEnd, Parent = row})
 	registerRow(sec, row, title)
 	return val
@@ -1124,11 +1235,11 @@ local function setLowGfx(on)
 	end
 end
 
--- Modo Lite: o próprio hub reduz seu custo (neve off, ESP e loops mais lentos)
+-- Modo Lite: o próprio hub reduz seu custo (estrelas off, ESP e loops mais lentos)
 local function setLite(on)
 	if Perf.Lite == on then return end
 	Perf.Lite = on
-	SnowContainer.Visible = State.Snow and not on and isOpen
+	StarContainer.Visible = State.Stars and not on
 end
 
 -- Verificado 1x por segundo com o FPS medido
@@ -1357,19 +1468,22 @@ do
 	local HomeScroll = createTab("Home", ICONS.Home, true, ORDER.Home)
 
 	local card = create("Frame", {
-		Size = UDim2.new(1, -8, 0, 72), BackgroundColor3 = COLORS.Card, BorderSizePixel = 0,
+		Size = UDim2.new(1, -8, 0, 72), BackgroundColor3 = COLORS.Card, BackgroundTransparency = 0.08, BorderSizePixel = 0,
 		LayoutOrder = nextOrder(HomeScroll), Parent = HomeScroll,
 	})
 	corner(card, 12)
-	stroke(card, COLORS.Stroke, 1)
+	stroke(card, COLORS.AccentDark, 1, 0.2)
+	create("UIGradient", {
+		Color = ColorSequence.new(Color3.fromRGB(150, 190, 255), Color3.fromRGB(255, 255, 255)), Parent = card,
+	})
 	Refs.homeAvatar = create("ImageLabel", {
 		Size = UDim2.fromOffset(48, 48), Position = UDim2.new(0, 14, 0.5, -24),
 		BackgroundColor3 = COLORS.CardHeader, Image = "", Parent = card,
 	})
 	corner(Refs.homeAvatar, 24)
-	stroke(Refs.homeAvatar, COLORS.Accent, 1.5, 0.2)
-	label({Size = UDim2.new(1, -90, 0, 14), Position = UDim2.new(0, 74, 0, 14), Text = "Welcome back,",
-		TextSize = 11, TextColor3 = COLORS.TextDark, Parent = card})
+	stroke(Refs.homeAvatar, COLORS.Cyan, 1.5, 0.2)
+	label({Size = UDim2.new(1, -90, 0, 14), Position = UDim2.new(0, 74, 0, 14), Text = "Welcome aboard, commander",
+		TextSize = 11, TextColor3 = COLORS.AccentGlow, Parent = card})
 	label({Size = UDim2.new(1, -90, 0, 20), Position = UDim2.new(0, 74, 0, 32),
 		Text = LocalPlayer.DisplayName .. " (@" .. LocalPlayer.Name .. ")", Font = Enum.Font.GothamBold,
 		TextSize = 14, TextTruncate = Enum.TextTruncate.AtEnd, Parent = card})
@@ -1390,14 +1504,14 @@ do
 	create("UIGridLayout", {CellSize = UDim2.new(0.235, 0, 1, 0), CellPadding = UDim2.new(0.02, 0, 0, 0),
 		SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid})
 	local function statBox(title, initial)
-		local box = create("Frame", {BackgroundColor3 = COLORS.Card, BorderSizePixel = 0,
+		local box = create("Frame", {BackgroundColor3 = COLORS.Card, BackgroundTransparency = 0.08, BorderSizePixel = 0,
 			LayoutOrder = nextOrder(grid), Parent = grid})
 		corner(box, 10)
 		stroke(box, COLORS.Stroke, 1)
 		label({Size = UDim2.new(1, -16, 0, 16), Position = UDim2.new(0, 10, 0, 8), Text = title,
 			TextSize = 10, TextColor3 = COLORS.TextDark, Parent = box})
 		return label({Size = UDim2.new(1, -16, 0, 20), Position = UDim2.new(0, 10, 0, 26), Text = initial,
-			TextSize = 13, Font = Enum.Font.GothamBold, Parent = box})
+			TextSize = 13, Font = Enum.Font.GothamBold, TextColor3 = COLORS.Cyan, Parent = box})
 	end
 	Refs.players = statBox("Players", #Players:GetPlayers() .. "/" .. Players.MaxPlayers)
 	Refs.session = statBox("Session", "00m 00s")
@@ -1418,7 +1532,7 @@ do
 	end)
 
 	local about = AddSection(HomeScroll, "About")
-	AddText(about, "Dark Shadow Hub v4.2\nMenu: botão flutuante" .. (IS_TOUCH and "" or " ou tecla (padrão Right Shift)") .. ". Arraste a sidebar ou o cabeçalho para mover. Scripts de jogo aparecem sozinhos, só no jogo certo. Performance Guard ligado por padrão.")
+	AddText(about, "Dark Shadow Hub v5.0 Cosmic\nMenu: botão flutuante" .. (IS_TOUCH and "" or " ou tecla (padrão Right Shift)") .. ". Arraste a sidebar ou o cabeçalho para mover. Scripts de jogo aparecem sozinhos, só no jogo certo. Performance Guard ligado por padrão.")
 end
 
 -- ---------- 10.2 PLAYER ----------
@@ -1619,7 +1733,7 @@ do
 end
 
 -- ---------- 10.4 SETTINGS ----------
-local UnloadHub -- definido na seção 13
+local UnloadHub -- definido na seção 14
 do
 	local scroll = createTab("Settings", ICONS.Settings, true, ORDER.Settings)
 	local ui = AddSection(scroll, "Interface", "Settings")
@@ -1652,9 +1766,9 @@ do
 		MainFrame.Position = UDim2.fromOffset(hubCenter.X, hubCenter.Y)
 	end)
 	AddToggle(ui, "Notifications", "Show pop-up messages", true, function(on) notificationsEnabled = on end)
-	AddToggle(ui, "Snow Effect", "Disable for better performance", State.Snow, function(on)
-		State.Snow = on
-		SnowContainer.Visible = on and not Perf.Lite and isOpen
+	AddToggle(ui, "Starfield Effect", "Stars, nebula and planet. Disable for performance", State.Stars, function(on)
+		State.Stars = on
+		StarContainer.Visible = on and not Perf.Lite
 	end)
 
 	-- Efeitos sonoros com controle de volume
@@ -1677,12 +1791,9 @@ end
 -- ================================================================= --
 -- 11. SISTEMA DE SCRIPTS POR JOGO
 --  Cada jogo vira uma ABA própria e SÓ aparece dentro do jogo dele.
---  Para adicionar outro jogo: copie o bloco RegisterGame({...}) e
---  preencha, em ordem de confiança:
---    PlaceIds / GameIds  -> detecção EXATA (não depende de idioma)
---    Names               -> nomes do jogo (ignora maiúsculas, acentos e símbolos)
+--    PlaceIds / GameIds  -> detecção EXATA
+--    Names               -> nomes do jogo (ignora maiúsculas e símbolos)
 --    Detect              -> função opcional que olha o conteúdo do jogo
---  O script só é carregado se UM desses métodos reconhecer o jogo.
 -- ================================================================= --
 local cleanupFns = {}
 local GameModules = {}
@@ -1708,7 +1819,6 @@ local function buildGameContext(def, group)
 	}
 end
 
--- Deixa só letras/números minúsculos: "[UPDATE] Merge a Mini Army!" -> "updatemergeaminiarmy"
 local function normalize(text)
 	return (string.gsub(string.lower(tostring(text or "")), "[^%w]", ""))
 end
@@ -1737,7 +1847,6 @@ local function matchesGame(def, gameName)
 	return false
 end
 
--- Só é chamado quando o jogo atual combina com o script (a aba nem existe nos outros jogos)
 local function loadGame(def)
 	if loadedGames[def.Name] or not ScreenGui.Parent then return false end
 	loadedGames[def.Name] = true
@@ -1759,24 +1868,22 @@ end
 -- 12. JOGO: MERGE A MINI ARMY
 --  Sub-abas: Quick | Merge | Economy | Combat | ESP | Tools
 --
---  AUTO MERGE: o SEU personagem anda sozinho até os pares iguais da
---  SUA base (caminhada normal, SEM teleporte). Ao passar por cima, o
---  jogo junta. Se você andar com teclado/joystick, o auto pausa e
---  retoma quando você parar. Ordem: remote aprendido > andar.
---  Teleporte só existe no Auto Base Attack (opcional, como antes).
+--  AUTO MERGE (novo): o script PEGA uma unidade, vai até uma IGUAL e
+--  junta. Se não existir igual, SOLTA a unidade e tenta outra.
+--  Tudo é feito por um CLONE FANTASMA: um clone seu fica parado onde
+--  você estava (e a câmera segue ele), enquanto seu corpo real fica
+--  invisível e faz o trabalho em alta velocidade. Quando termina (ou
+--  você desliga), o corpo volta para o lugar do clone.
 --
---  AUTO REBIRTH / UPGRADE: modo silencioso. Clica nos botões por trás
---  da interface: nada de pop-up, notificação ou som no seu lado.
+--  AUTO REBIRTH / UPGRADE: modo silencioso, clicam por trás da interface.
 -- ================================================================= --
 RegisterGame({
 	Name = "Merge a Mini Army",
 	TabName = "Mini Army",
 	Icon = ICONS.Merge,
-	PlaceIds = {},                       -- opcional: PlaceId exato (veja em Home > Copy Game Info)
-	GameIds = {},                        -- opcional: GameId exato
+	PlaceIds = {},
+	GameIds = {},
 	Names = {"Merge a Mini Army", "Merge Mini Army", "Mini Army"},
-	-- Plano B (independe de idioma): olha os NOMES de remotes/objetos do jogo, que o
-	-- desenvolvedor escreve em inglês. Exige "merge" + algo de exército juntos.
 	Detect = function()
 		local hasMerge, hasArmy = false, false
 		local ARMY = {"army", "deploy", "airdrop", "garrison", "outpost", "troop", "soldier"}
@@ -1812,15 +1919,19 @@ RegisterGame({
 		local MERGE_WORDS = {"merge", "combine", "fuse"}
 
 		local cfg = {
-			-- merge (anda de verdade até os pares; sem teleporte)
-			Merge = false, MergeDelay = 0.1, UseRemote = true, AutoLearn = true,
-			WalkTimeout = 10,        -- segundos máximos para chegar em cada unidade
-			Drag = false, MergeBtn = false, UnitWords = {}, BaseRadius = 70,
+			-- merge (pega -> vai até o igual -> junta / solta)
+			Merge = false, MergeDelay = 0.05, UseRemote = true, AutoLearn = true,
+			Ghost = true,            -- clone fantasma invisível
+			Glide = true,            -- movimento rápido (false = anda normal)
+			GlideSpeed = 170,        -- studs por segundo
+			Settle = 0.08,           -- tempo para o servidor ver sua posição
+			WalkTimeout = 8,
+			MergeBtn = false, UnitWords = {}, BaseRadius = 70,
 			-- economia
 			Upgrade = false, UpgradeEvery = 1, UpgradeWords = {}, Rebirth = false, RebirthEvery = 20,
 			Collect = false, Spin = false, Equip = false, Buy = false, ActionDelay = 0.8,
-			Silent = true,           -- clica sem precisar abrir menus
-			MouseFallback = false,   -- clique de mouse virtual (só com botão visível)
+			Silent = true,
+			MouseFallback = false,
 			-- combate
 			Deploy = false, DeployEvery = 5, Battle = false, Attack = false, AtkEvent = true, AtkCamp = true,
 			AtkBase = false, AtkTeleport = true, KeepDeployed = true, AtkTimeout = 12,
@@ -1829,7 +1940,6 @@ RegisterGame({
 			Custom = false, CustomWords = {}, AfkRebirth = false,
 		}
 
-		-- Auto Merge ligado por botão rápido OU por "Merge Now" (uma rodada completa)
 		local mergeOnce = false
 
 		local function isPlayerChar(i) return i:IsA("Model") and Players:GetPlayerFromCharacter(i) ~= nil end
@@ -1886,7 +1996,6 @@ RegisterGame({
 			return (minV + maxV) / 2, math.clamp((maxV - minV).Magnitude / 2 + 8, 20, 400)
 		end
 
-		-- Procura automaticamente o plot/base que pertence ao seu jogador
 		local function detectBase()
 			local found
 			local count = 0
@@ -2048,7 +2157,7 @@ RegisterGame({
 				end
 			end
 			if base.center then
-				overlap.FilterDescendantsInstances = {LocalPlayer.Character, ESPFolder}
+				overlap.FilterDescendantsInstances = {LocalPlayer.Character, ESPFolder, workspace.CurrentCamera}
 				local ok, found = pcall(function() return workspace:GetPartBoundsInRadius(base.center, base.radius, overlap) end)
 				if ok and found then
 					for i = 1, #found do
@@ -2066,306 +2175,7 @@ RegisterGame({
 		end
 
 		-- ======================================================
-		-- C) EXECUÇÃO DO MERGE (anda de verdade, SEM teleporte)
-		--    1) remote aprendido (se existir, não precisa andar)
-		--    2) andar até a unidade A, depois até a B
-		-- ======================================================
-		local learned = env.__ShadowMiniLearn
-		local recording, captured = false, nil
-
-		-- Prompts de merge de cada unidade (em cache, para não varrer descendentes toda hora)
-		local promptCache = setmetatable({}, {__mode = "k"})
-		local function mergePrompts(u)
-			local list = promptCache[u]
-			if list then return list end
-			list = {}
-			for _, d in ipairs(u:GetDescendants()) do
-				if d:IsA("ProximityPrompt")
-					and hasAny(string.lower(d.ActionText .. " " .. d.ObjectText .. " " .. d.Name), MERGE_WORDS) then
-					list[#list + 1] = d
-				end
-			end
-			promptCache[u] = list
-			return list
-		end
-
-		local function firePrompts(u)
-			if not fireproximityprompt then return end
-			for _, d in ipairs(mergePrompts(u)) do
-				if d.Parent and d.Enabled then pcall(fireproximityprompt, d) end
-			end
-		end
-
-		-- Toca a unidade (sem mover o personagem): complemento ao andar
-		local function touchUnit(u)
-			local p, root = unitPart(u), getRoot()
-			if not (p and root) then return end
-			if firetouchinterest then
-				pcall(function()
-					firetouchinterest(root, p, 0)
-					firetouchinterest(root, p, 1)
-				end)
-			end
-			firePrompts(u)
-		end
-
-		local function fireLearned(a, b)
-			local L = learned
-			if not (L and L.remote and L.remote.Parent) then return false end
-			local args = {}
-			for i = 1, L.args.n do args[i] = L.args[i] end
-			if a and #L.inst >= 2 then
-				args[L.inst[1]] = a
-				args[L.inst[2]] = b
-			elseif a and #L.inst == 1 then
-				args[L.inst[1]] = a
-			end
-			task.spawn(function()
-				pcall(function()
-					if L.method == "InvokeServer" then L.remote:InvokeServer(table.unpack(args, 1, L.args.n))
-					else L.remote:FireServer(table.unpack(args, 1, L.args.n)) end
-				end)
-			end)
-			return true
-		end
-
-		-- Detecta se VOCÊ está controlando o personagem (teclado / joystick / setas)
-		local MOVE_KEYS = {Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D,
-			Enum.KeyCode.Up, Enum.KeyCode.Down, Enum.KeyCode.Left, Enum.KeyCode.Right}
-		local function userIsMoving()
-			if Mv.controls then
-				local ok, v = pcall(function() return Mv.controls:GetMoveVector() end)
-				if ok and v and v.Magnitude > 0.1 then return true end
-			end
-			for _, k in ipairs(MOVE_KEYS) do
-				if UserInputService:IsKeyDown(k) then return true end
-			end
-			return false
-		end
-
-		local function mergeActive()
-			return running and ctx.ScreenGui.Parent ~= nil and (cfg.Merge or mergeOnce)
-		end
-
-		local function stopWalk()
-			local hum, root = getHum(), getRoot()
-			if hum and root then pcall(function() hum:MoveTo(root.Position) end) end
-		end
-
-		-- Anda até uma posição com o próprio personagem (caminhada normal, sem CFrame/teleporte)
-		-- Retorna: "arrived", "timeout", "user" (você assumiu), "stop" (desligou / morreu)
-		local function walkTo(pos, timeout)
-			local root, hum = getRoot(), getHum()
-			if not (root and hum) or State.Fly then return "stop" end
-			hum:MoveTo(pos)
-			local t0 = os.clock()
-			local last, stuckAt = root.Position, os.clock()
-			while mergeActive() do
-				if userIsMoving() then
-					stopWalk()
-					return "user"
-				end
-				root, hum = getRoot(), getHum()
-				if not (root and hum) then return "stop" end
-				local cur = root.Position
-				local flat = Vector3.new(cur.X - pos.X, 0, cur.Z - pos.Z).Magnitude
-				if flat <= 3.5 then
-					stopWalk()
-					return "arrived"
-				end
-				if os.clock() - t0 > timeout then
-					stopWalk()
-					return "timeout"
-				end
-				if (cur - last).Magnitude > 0.35 then
-					last, stuckAt = cur, os.clock()
-				elseif os.clock() - stuckAt > 0.9 then
-					-- travou em algo: pula e tenta de novo
-					hum.Jump = true
-					hum:MoveTo(pos)
-					stuckAt = os.clock()
-				end
-				task.wait(0.1)
-			end
-			stopWalk()
-			return "stop"
-		end
-
-		-- Par mais próximo de você (pares disponíveis, sem cooldown)
-		local function nearestPair()
-			local sc = scanUnits()
-			local root = getRoot()
-			local now = os.clock()
-			local bestA, bestB, bestScore
-			for _, list in pairs(sc.groups) do
-				local n = #list
-				for i = 1, n do
-					local a = list[i]
-					local pa = unitPart(a)
-					if pa and a.Parent and (not cooldown[a] or cooldown[a] < now) then
-						for j = i + 1, n do
-							local b = list[j]
-							local pb = unitPart(b)
-							if pb and b.Parent and (not cooldown[b] or cooldown[b] < now) then
-								local score = (pa.Position - pb.Position).Magnitude
-								if root then score = score + (pa.Position - root.Position).Magnitude * 0.5 end
-								if not bestScore or score < bestScore then
-									bestA, bestB, bestScore = a, b, score
-								end
-							end
-						end
-					end
-				end
-			end
-			if bestA then return {bestA, bestB} end
-			return nil
-		end
-
-		local function isMerged(a, b, keyA, keyB)
-			return (not a.Parent) or (not b.Parent) or unitKey(a) ~= keyA or unitKey(b) ~= keyB
-		end
-
-		local function markOk(a, b)
-			stats.merges = stats.merges + 1
-			failCount[a], failCount[b] = nil, nil
-		end
-
-		local function markFail(a, b)
-			local n = (failCount[a] or 0) + 1
-			failCount[a], failCount[b] = n, n
-			local t = os.clock() + math.min(2 * n, 12)
-			cooldown[a], cooldown[b] = t, t
-			stats.fails = stats.fails + 1
-		end
-
-		local function mergeOnePair(a, b)
-			local pa, pb = unitPart(a), unitPart(b)
-			if not (pa and pb) then return end
-			local keyA, keyB = unitKey(a), unitKey(b)
-
-			if cfg.Drag then pcall(function() a:PivotTo(CFrame.new(pb.Position)) end) end
-
-			-- 1) remote aprendido (sem andar)
-			if cfg.UseRemote and learned and learned.remote and learned.remote.Parent and not learned.direct then
-				fireLearned(a, b)
-				task.wait(0.4)
-				if isMerged(a, b, keyA, keyB) then
-					markOk(a, b)
-					return
-				end
-			end
-
-			-- 2) anda até a primeira unidade, depois até a segunda
-			local status = walkTo(pa.Position, cfg.WalkTimeout)
-			if status == "arrived" then
-				touchUnit(a)
-				task.wait(0.3)
-				status = walkTo(pb.Position, cfg.WalkTimeout)
-				if status == "arrived" then
-					touchUnit(b)
-					task.wait(0.5)
-				end
-			end
-
-			if status == "arrived" then
-				if isMerged(a, b, keyA, keyB) then markOk(a, b) else markFail(a, b) end
-			elseif status == "timeout" then
-				markFail(a, b)
-			end
-			-- "user" / "stop": não conta como falha, só pausa
-		end
-
-		-- Loop do Auto Merge
-		task.spawn(function()
-			while running and ctx.ScreenGui.Parent do
-				if cfg.Merge or mergeOnce then
-					if ensureBase() then
-						if cfg.UseRemote and learned and learned.direct and learned.remote then
-							local sc = scanUnits()
-							if sc.pairs > 0 then
-								fireLearned()
-								stats.merges = stats.merges + 1
-							else
-								mergeOnce = false
-							end
-							task.wait(math.max(cfg.MergeDelay, Perf.Lite and 0.4 or 0.1))
-						elseif userIsMoving() then
-							-- Você está andando: o personagem fica livre (merges acontecem ao passar por cima)
-							task.wait(0.2)
-						else
-							local pair = nearestPair()
-							if pair then
-								local ok, err = pcall(mergeOnePair, pair[1], pair[2])
-								if not ok then warn("[ShadowHub] merge: " .. tostring(err)) end
-								scan.t = 0
-								task.wait(math.max(cfg.MergeDelay, Perf.Lite and 0.3 or 0.05))
-							else
-								mergeOnce = false
-								task.wait(0.4)
-							end
-						end
-					else
-						mergeOnce = false
-						task.wait(1)
-					end
-				else
-					task.wait(0.3)
-				end
-			end
-		end)
-
-		-- Aprender o remote do merge (você faz 1 merge à mão e o script copia)
-		local SKIP_REMOTE = {"position", "move", "camera", "ping", "heartbeat", "analytics", "log", "cursor", "mouse", "look"}
-		local function onRemote(remote, method, ...)
-			if not recording then return end
-			local lname = string.lower(remote.Name)
-			if hasAny(lname, SKIP_REMOTE) then return end
-			local args = table.pack(...)
-			local inst = {}
-			for i = 1, args.n do
-				local v = args[i]
-				if typeof(v) == "Instance" and (v:IsA("Model") or v:IsA("BasePart")) and inMyBase(v) then
-					inst[#inst + 1] = i
-				end
-			end
-			local byName = hasAny(lname, MERGE_WORDS)
-			-- precisa ter nome de merge OU duas unidades da sua base como argumento
-			if byName or #inst >= 2 then
-				if not captured or byName then
-					captured = {remote = remote, method = method, args = args, inst = inst,
-						byName = byName, direct = (#inst == 0)}
-				end
-			end
-		end
-
-		local function startLearning(seconds, quiet)
-			if recording then return end
-			if not installHook() then
-				if not quiet then ctx.Notify("Learn", "Executor lacks hookmetamethod. Walk mode still works", 5) end
-				return
-			end
-			if not ensureBase(quiet) then return end
-			captured, recording = nil, true
-			env.__ShadowHookFn = onRemote
-			if not quiet then ctx.Notify("Learning", "Merge two units BY HAND now (" .. seconds .. "s)", 6) end
-			task.spawn(function()
-				local t0 = os.clock()
-				while running and recording and not captured and os.clock() - t0 < seconds do task.wait(0.25) end
-				recording = false
-				env.__ShadowHookFn = nil
-				if captured then
-					learned = captured
-					env.__ShadowMiniLearn = learned
-					if Refs.mRemote then Refs.mRemote.Text = learned.remote.Name end
-					ctx.Notify("Learned", learned.remote.Name .. (learned.direct and " (direct)" or " (targets)"), 4)
-				elseif not quiet then
-					ctx.Notify("Learn", "Nothing captured. Try again", 4)
-				end
-			end)
-		end
-
-		-- ======================================================
-		-- D) BOTÕES DA INTERFACE DO JOGO (Economy / Combat / extras)
+		-- C) BOTÕES DA INTERFACE DO JOGO (clique silencioso)
 		-- ======================================================
 		local CATS = {
 			{key = "Rebirth",  words = {"rebirth"}, boostOk = true},
@@ -2378,6 +2188,7 @@ RegisterGame({
 			{key = "Spin",     words = {"spin"}},
 			{key = "Battle",   words = {"start battle", "next wave", "next stage", "start wave"}},
 			{key = "Buy",      words = {"buy", "spawn", "summon", "recruit", "hire"}},
+			{key = "Drop",     words = {"put down", "let go", "release", "drop"}},   -- botão de soltar a unidade
 		}
 		local BLOCK_HARD = {"robux", "r$", "gamepass", "game pass", "premium", "gift", "donat", "purchase", "vip"}
 		local BOOST = {"x2", "2x", "x3", "3x", "x4", "4x"}
@@ -2416,13 +2227,14 @@ RegisterGame({
 			info.text, info.t = t, now
 			info.block = hasAny(t, BLOCK_HARD)
 			info.boost = hasAny(t, BOOST)
-			-- Confirmação: só o TEXTO do próprio botão (evita clicar em "eyes", "yesterday" etc.)
 			local own = string.lower(b:IsA("TextButton") and b.Text or "")
 			info.confirm = (own == "yes" or own == "confirm" or own == "ok" or string.find(own, "confirm", 1, true) ~= nil)
 			info.cat = nil
 			for _, cat in ipairs(CATS) do
 				if hasAny(t, cat.words) then info.cat = cat break end
 			end
+			-- "airdrop" não é botão de soltar
+			if info.cat and info.cat.key == "Drop" and string.find(t, "airdrop", 1, true) then info.cat = nil end
 		end
 
 		local function isShown(b)
@@ -2447,8 +2259,6 @@ RegisterGame({
 			return false
 		end
 
-		-- Clique SILENCIOSO: dispara os eventos do botão direto (funciona com o menu fechado e
-		-- sem mexer no mouse). O clique virtual só entra se você ativar "Mouse fallback".
 		local function clickButton(b)
 			if fireSignal(b.MouseButton1Click) then return true end
 			if fireSignal(b.Activated) then return true end
@@ -2490,9 +2300,7 @@ RegisterGame({
 						elseif allowConfirm and now < lastConfirm and info.confirm then
 							key = "Confirm"
 						end
-						-- Filtro de upgrades escolhidos
 						if key == "Upgrade" and #cfg.UpgradeWords > 0 and not hasAny(info.text, cfg.UpgradeWords) then key = nil end
-						-- Modo silencioso: não exige o botão visível
 						if key and (cfg.Silent or isShown(b)) then
 							if clickButton(b) then
 								n = n + 1
@@ -2510,7 +2318,6 @@ RegisterGame({
 			return n
 		end
 
-		-- Categorias que rodam em silêncio total (sem nenhuma mensagem na tela)
 		local QUIET_KEYS = {Rebirth = true, Upgrade = true}
 
 		local function clickNow(key)
@@ -2553,7 +2360,528 @@ RegisterGame({
 		end)
 
 		-- ======================================================
-		-- E) TERRITÓRIOS, EVENTOS E BASE ATTACK
+		-- D) CLONE FANTASMA
+		--  Um clone seu (parado, só visual) fica onde você estava e
+		--  a câmera segue ele. Seu corpo real fica invisível e faz o
+		--  trabalho. Ao parar, o corpo volta para o lugar do clone.
+		-- ======================================================
+		local ghost = {active = false, clone = nil, home = nil, t = 0}
+
+		local function setHidden(char, on)
+			for _, d in ipairs(char:GetDescendants()) do
+				if d:IsA("BasePart") then d.LocalTransparencyModifier = on and 1 or 0 end
+			end
+		end
+
+		local function ghostStart()
+			if ghost.active or not cfg.Ghost then return end
+			local char, root, hum, cam = LocalPlayer.Character, getRoot(), getHum(), workspace.CurrentCamera
+			if not (char and root and hum and cam) or hum.Health <= 0 then return end
+			local oldArch = char.Archivable
+			char.Archivable = true
+			local ok, cl = pcall(function() return char:Clone() end)
+			char.Archivable = oldArch
+			if not ok or not cl then return end
+			for _, d in ipairs(cl:GetDescendants()) do
+				if d:IsA("BaseScript") then
+					d:Destroy()
+				elseif d:IsA("BasePart") then
+					d.Anchored = true
+					d.CanCollide = false
+					d.CanTouch = false
+					d.CanQuery = false
+				end
+			end
+			cl.Name = "GhostClone"
+			cl.Parent = cam
+			ghost.clone, ghost.home, ghost.active, ghost.t = cl, root.CFrame, true, os.clock()
+			local chum = cl:FindFirstChildOfClass("Humanoid")
+			if chum then cam.CameraSubject = chum end
+			setHidden(char, true)
+		end
+
+		local function ghostStop()
+			if not ghost.active then return end
+			ghost.active = false
+			local char, root, hum, cam = LocalPlayer.Character, getRoot(), getHum(), workspace.CurrentCamera
+			if root and ghost.home then
+				root.CFrame = ghost.home
+				root.AssemblyLinearVelocity = Vector3.zero
+			end
+			if char then setHidden(char, false) end
+			if cam and hum then cam.CameraSubject = hum end
+			if ghost.clone then ghost.clone:Destroy() end
+			ghost.clone = nil
+		end
+
+		local function ghostTick()
+			if not ghost.active then return end
+			local hum = getHum()
+			if not hum or hum.Health <= 0 then
+				ghostStop()
+				return
+			end
+			if os.clock() - ghost.t > 1.5 then
+				ghost.t = os.clock()
+				local char = LocalPlayer.Character
+				if char then setHidden(char, true) end
+			end
+		end
+
+		-- ======================================================
+		-- E) EXECUÇÃO DO MERGE: PEGA -> VAI ATÉ O IGUAL -> JUNTA / SOLTA
+		-- ======================================================
+		local learned = env.__ShadowMiniLearn
+		local recording, captured = false, nil
+		local remoteBadUntil, remoteFails = 0, 0
+
+		local PICK_WORDS = {"pick", "grab", "hold", "carry", "take", "lift", "drag", "select"}
+		local DROP_WORDS = {"drop", "place", "put down", "release", "let go", "throw"}
+		local MATE_WORDS = {"merge", "combine", "fuse", "place", "drop", "put"}
+
+		local promptCache = setmetatable({}, {__mode = "k"})
+		local function unitPrompts(u)
+			local c = promptCache[u]
+			local now = os.clock()
+			if c and (#c.list > 0 or now - c.t < 2) then return c.list end
+			local list = {}
+			for _, d in ipairs(u:GetDescendants()) do
+				if d:IsA("ProximityPrompt") then list[#list + 1] = d end
+			end
+			promptCache[u] = {t = now, list = list}
+			return list
+		end
+
+		local function promptTextOf(d)
+			return string.lower(d.ActionText .. " " .. d.ObjectText .. " " .. d.Name)
+		end
+
+		-- Dispara os prompts da unidade que combinam com "want"; se nenhum combinar, qualquer um que não seja "avoid"
+		local function firePromptsOf(u, want, avoid)
+			if not fireproximityprompt then return 0 end
+			local list = unitPrompts(u)
+			local n = 0
+			for _, d in ipairs(list) do
+				if d.Parent and d.Enabled and hasAny(promptTextOf(d), want) then
+					pcall(fireproximityprompt, d)
+					n = n + 1
+				end
+			end
+			if n == 0 then
+				for _, d in ipairs(list) do
+					if d.Parent and d.Enabled and not hasAny(promptTextOf(d), avoid) then
+						pcall(fireproximityprompt, d)
+						n = n + 1
+					end
+				end
+			end
+			return n
+		end
+
+		local function touchUnit(u)
+			local p, root = unitPart(u), getRoot()
+			if not (p and root) or not firetouchinterest then return end
+			pcall(function()
+				firetouchinterest(root, p, 0)
+				firetouchinterest(root, p, 1)
+			end)
+		end
+
+		local function fireLearned(a, b)
+			local L = learned
+			if not (L and L.remote and L.remote.Parent) then return false end
+			local args = {}
+			for i = 1, L.args.n do args[i] = L.args[i] end
+			if a and #L.inst >= 2 then
+				args[L.inst[1]] = a
+				args[L.inst[2]] = b
+			elseif a and #L.inst == 1 then
+				args[L.inst[1]] = a
+			end
+			task.spawn(function()
+				pcall(function()
+					if L.method == "InvokeServer" then L.remote:InvokeServer(table.unpack(args, 1, L.args.n))
+					else L.remote:FireServer(table.unpack(args, 1, L.args.n)) end
+				end)
+			end)
+			return true
+		end
+
+		local MOVE_KEYS = {Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D,
+			Enum.KeyCode.Up, Enum.KeyCode.Down, Enum.KeyCode.Left, Enum.KeyCode.Right}
+		local function userIsMoving()
+			if Mv.controls then
+				local ok, v = pcall(function() return Mv.controls:GetMoveVector() end)
+				if ok and v and v.Magnitude > 0.1 then return true end
+			end
+			for _, k in ipairs(MOVE_KEYS) do
+				if UserInputService:IsKeyDown(k) then return true end
+			end
+			return false
+		end
+
+		local function mergeActive()
+			return running and ctx.ScreenGui.Parent ~= nil and (cfg.Merge or mergeOnce)
+		end
+
+		local function stopWalk()
+			local hum, root = getHum(), getRoot()
+			if hum and root then pcall(function() hum:MoveTo(root.Position) end) end
+		end
+
+		-- Movimento normal (andando)
+		local function walkTo(pos, timeout)
+			local root, hum = getRoot(), getHum()
+			if not (root and hum) or State.Fly then return "stop" end
+			hum:MoveTo(pos)
+			local t0 = os.clock()
+			local last, stuckAt = root.Position, os.clock()
+			while mergeActive() do
+				if not ghost.active and userIsMoving() then
+					stopWalk()
+					return "user"
+				end
+				root, hum = getRoot(), getHum()
+				if not (root and hum) then return "stop" end
+				local cur = root.Position
+				local flat = Vector3.new(cur.X - pos.X, 0, cur.Z - pos.Z).Magnitude
+				if flat <= 3.5 then
+					stopWalk()
+					return "arrived"
+				end
+				if os.clock() - t0 > timeout then
+					stopWalk()
+					return "timeout"
+				end
+				if (cur - last).Magnitude > 0.35 then
+					last, stuckAt = cur, os.clock()
+				elseif os.clock() - stuckAt > 0.9 then
+					hum.Jump = true
+					hum:MoveTo(pos)
+					stuckAt = os.clock()
+				end
+				task.wait(0.1)
+			end
+			stopWalk()
+			return "stop"
+		end
+
+		-- Movimento rápido (desliza o corpo até o alvo, sem esperar pathing)
+		local function glideTo(pos, timeout)
+			local goal = pos + Vector3.new(0, 2.5, 0)
+			local t0 = os.clock()
+			while mergeActive() do
+				local root = getRoot()
+				if not root then return false end
+				local cur = root.Position
+				local d = goal - cur
+				local dist = d.Magnitude
+				if dist <= 2.5 then
+					root.AssemblyLinearVelocity = Vector3.zero
+					return true
+				end
+				if os.clock() - t0 > timeout then return false end
+				local dt = RunService.Heartbeat:Wait()
+				root = getRoot()
+				if not root then return false end
+				local step = math.min(dist, cfg.GlideSpeed * dt)
+				root.CFrame = CFrame.new(cur + d.Unit * step) * (root.CFrame - root.CFrame.Position)
+				root.AssemblyLinearVelocity = Vector3.zero
+			end
+			return false
+		end
+
+		local function moveTo(pos, timeout)
+			if cfg.Glide then return glideTo(pos, timeout) end
+			return walkTo(pos, timeout) == "arrived"
+		end
+
+		local function nearestPair()
+			local sc = scanUnits()
+			local root = getRoot()
+			local now = os.clock()
+			local bestA, bestB, bestScore
+			for _, list in pairs(sc.groups) do
+				local n = #list
+				for i = 1, n do
+					local a = list[i]
+					local pa = unitPart(a)
+					if pa and a.Parent and (not cooldown[a] or cooldown[a] < now) then
+						for j = i + 1, n do
+							local b = list[j]
+							local pb = unitPart(b)
+							if pb and b.Parent and (not cooldown[b] or cooldown[b] < now) then
+								local score = (pa.Position - pb.Position).Magnitude
+								if root then score = score + (pa.Position - root.Position).Magnitude * 0.5 end
+								if not bestScore or score < bestScore then
+									bestA, bestB, bestScore = a, b, score
+								end
+							end
+						end
+					end
+				end
+			end
+			if bestA then return {bestA, bestB} end
+			return nil
+		end
+
+		local function isMerged(a, b, keyA, keyB)
+			return (not a.Parent) or (not b.Parent) or unitKey(a) ~= keyA or unitKey(b) ~= keyB
+		end
+
+		local function markOk(a, b)
+			stats.merges = stats.merges + 1
+			failCount[a], failCount[b] = nil, nil
+		end
+
+		local function markFail(a, b)
+			local n = (failCount[a] or 0) + 1
+			failCount[a] = n
+			if b then failCount[b] = n end
+			local t = os.clock() + math.min(2 * n, 12)
+			cooldown[a] = t
+			if b then cooldown[b] = t end
+			stats.fails = stats.fails + 1
+		end
+
+		-- Unidade que está na sua mão (modelo filho do personagem)
+		local function heldUnit()
+			local c = LocalPlayer.Character
+			if not c then return nil end
+			for _, ch in ipairs(c:GetChildren()) do
+				if ch:IsA("Model") and unitKey(ch) then return ch end
+			end
+			return nil
+		end
+
+		local carry = nil   -- {unit, key, t}: o que acabamos de pegar
+
+		-- Solta o que estiver na mão (prompt de soltar, botão "Drop", desequipar)
+		local function dropHeld(u)
+			if u and u.Parent then firePromptsOf(u, DROP_WORDS, PICK_WORDS) end
+			ensureButtonTracking()
+			pcall(clickCategory, {Drop = true}, os.clock(), false)
+			local hum = getHum()
+			if hum then pcall(function() hum:UnequipTools() end) end
+			carry = nil
+		end
+
+		-- Procura a unidade IGUAL mais próxima (mesma chave), diferente da que está na mão
+		local function findMate(key, src)
+			local sc = scanUnits(true)
+			local list = sc.groups[key]
+			if not list then return nil end
+			local root = getRoot()
+			local now = os.clock()
+			local best, bestD
+			for _, u in ipairs(list) do
+				if u ~= src and u.Parent and (not cooldown[u] or cooldown[u] < now) then
+					local p = unitPart(u)
+					if p then
+						local d = root and (p.Position - root.Position).Magnitude or 0
+						if not bestD or d < bestD then best, bestD = u, d end
+					end
+				end
+			end
+			return best
+		end
+
+		-- Um ciclo: (1) se está segurando, vai até o igual e junta; se não há igual, solta.
+		--           (2) se não está segurando, vai até a unidade de um par e pega.
+		local function mergeCycle()
+			local held = heldUnit()
+			local key, src
+			if carry and carry.unit and os.clock() - carry.t < 10 then
+				key, src = carry.key, carry.unit
+			elseif held then
+				key, src = unitKey(held), held
+			end
+
+			if key then
+				local mate = findMate(key, src)
+				if mate then
+					local pm = unitPart(mate)
+					local mateKey = unitKey(mate)
+					if pm and moveTo(pm.Position, cfg.WalkTimeout) then
+						task.wait(cfg.Settle)
+						firePromptsOf(mate, MATE_WORDS, PICK_WORDS)
+						touchUnit(mate)
+						task.wait(cfg.Settle + 0.1)
+						local merged = (not mate.Parent) or unitKey(mate) ~= mateKey or (src ~= nil and not src.Parent)
+						if merged then
+							markOk(src or mate, mate)
+						else
+							dropHeld(held or src)   -- não juntou: solta
+							markFail(src or mate, mate)
+						end
+					else
+						dropHeld(held or src)       -- não conseguiu chegar: solta
+						markFail(src or mate, mate)
+					end
+				else
+					dropHeld(held or src)           -- sem igual: solta
+				end
+				carry = nil
+				return "done"
+			end
+
+			local pair = nearestPair()
+			if not pair then return "idle" end
+			local a = pair[1]
+			local pa = unitPart(a)
+			local keyA = unitKey(a)
+			if not (pa and keyA) then markFail(a, pair[2]) return "done" end
+			if not moveTo(pa.Position, cfg.WalkTimeout) then
+				markFail(a, pair[2])
+				return "done"
+			end
+			task.wait(cfg.Settle)
+			firePromptsOf(a, PICK_WORDS, DROP_WORDS)
+			touchUnit(a)
+			task.wait(cfg.Settle)
+			carry = {unit = a, key = keyA, t = os.clock()}
+			return "done"
+		end
+
+		-- Loop do Auto Merge
+		task.spawn(function()
+			local idleSince = nil
+			while running and ctx.ScreenGui.Parent do
+				if cfg.Merge or mergeOnce then
+					if ensureBase() then
+						if cfg.UseRemote and learned and learned.direct and learned.remote then
+							-- remote direto (merge de tudo de uma vez)
+							local sc = scanUnits()
+							if sc.pairs > 0 then
+								fireLearned()
+								stats.merges = stats.merges + 1
+							else
+								mergeOnce = false
+							end
+							task.wait(math.max(cfg.MergeDelay, Perf.Lite and 0.4 or 0.1))
+						elseif not cfg.Ghost and not carry and userIsMoving() then
+							task.wait(0.2)   -- sem clone: você andando tem prioridade
+						else
+							local handled = false
+							-- remote aprendido com alvos: mais rápido, sem sair do lugar
+							if cfg.UseRemote and learned and learned.remote and learned.remote.Parent
+								and not learned.direct and not carry and os.clock() > remoteBadUntil then
+								local pair = nearestPair()
+								if pair then
+									ghostStart()
+									local a, b = pair[1], pair[2]
+									local ka, kb = unitKey(a), unitKey(b)
+									fireLearned(a, b)
+									task.wait(0.3)
+									if isMerged(a, b, ka, kb) then
+										markOk(a, b)
+										remoteFails = 0
+										handled = true
+									else
+										remoteFails = remoteFails + 1
+										if remoteFails >= 3 then
+											remoteBadUntil = os.clock() + 30
+											remoteFails = 0
+										end
+									end
+								end
+							end
+							local res = handled and "done" or nil
+							if not res then
+								local nearAny = scanUnits().pairs > 0 or carry ~= nil or heldUnit() ~= nil
+								if nearAny then
+									ghostStart()
+									local ok, r = pcall(mergeCycle)
+									if not ok then
+										warn("[ShadowHub] merge: " .. tostring(r))
+										carry = nil
+										r = "done"
+										task.wait(0.3)
+									end
+									res = r
+								else
+									res = "idle"
+								end
+							end
+							ghostTick()
+							scan.t = 0
+							if res == "idle" then
+								idleSince = idleSince or os.clock()
+								if not cfg.Merge then mergeOnce = false end
+								if not cfg.Merge or os.clock() - idleSince > 3 then
+									ghostStop()   -- sem trabalho: devolve o controle para você
+								end
+								task.wait(0.4)
+							else
+								idleSince = nil
+								task.wait(math.max(cfg.MergeDelay, Perf.Lite and 0.3 or 0.02))
+							end
+						end
+					else
+						mergeOnce = false
+						ghostStop()
+						task.wait(1)
+					end
+				else
+					ghostStop()
+					carry = nil
+					task.wait(0.3)
+				end
+			end
+			ghostStop()
+		end)
+
+		-- Aprender o remote do merge (você faz 1 merge à mão e o script copia)
+		local SKIP_REMOTE = {"position", "move", "camera", "ping", "heartbeat", "analytics", "log", "cursor", "mouse", "look"}
+		local function onRemote(remote, method, ...)
+			if not recording then return end
+			local lname = string.lower(remote.Name)
+			if hasAny(lname, SKIP_REMOTE) then return end
+			local args = table.pack(...)
+			local inst = {}
+			for i = 1, args.n do
+				local v = args[i]
+				if typeof(v) == "Instance" and (v:IsA("Model") or v:IsA("BasePart")) and inMyBase(v) then
+					inst[#inst + 1] = i
+				end
+			end
+			local byName = hasAny(lname, MERGE_WORDS)
+			if byName or #inst >= 2 then
+				if not captured or byName then
+					captured = {remote = remote, method = method, args = args, inst = inst,
+						byName = byName, direct = (#inst == 0)}
+				end
+			end
+		end
+
+		local function startLearning(seconds, quiet)
+			if recording then return end
+			if not installHook() then
+				if not quiet then ctx.Notify("Learn", "Executor lacks hookmetamethod. Clone mode still works", 5) end
+				return
+			end
+			if not ensureBase(quiet) then return end
+			captured, recording = nil, true
+			env.__ShadowHookFn = onRemote
+			if not quiet then ctx.Notify("Learning", "Merge two units BY HAND now (" .. seconds .. "s)", 6) end
+			task.spawn(function()
+				local t0 = os.clock()
+				while running and recording and not captured and os.clock() - t0 < seconds do task.wait(0.25) end
+				recording = false
+				env.__ShadowHookFn = nil
+				if captured then
+					learned = captured
+					env.__ShadowMiniLearn = learned
+					if Refs.mRemote then Refs.mRemote.Text = learned.remote.Name end
+					ctx.Notify("Learned", learned.remote.Name .. (learned.direct and " (direct)" or " (targets)"), 4)
+				elseif not quiet then
+					ctx.Notify("Learn", "Nothing captured. Try again", 4)
+				end
+			end)
+		end
+
+		-- ======================================================
+		-- F) TERRITÓRIOS, EVENTOS E BASE ATTACK
 		-- ======================================================
 		local KEYWORDS = {"captur", "conquer", "garrison", "compound", "airbase", "territor", "airdrop", "camp", "outpost", "crate", "event"}
 		local prompts, originalHold = {}, {}
@@ -2716,7 +3044,7 @@ RegisterGame({
 		end)
 
 		-- ======================================================
-		-- F) ESP DO JOGO (pares de merge + alvos/eventos)
+		-- G) ESP DO JOGO (pares de merge + alvos/eventos)
 		-- ======================================================
 		local function hashStr(s)
 			local h = 7
@@ -2789,7 +3117,7 @@ RegisterGame({
 		end)
 
 		-- ======================================================
-		-- G) INTERFACE: Quick | Merge | Economy | Combat | ESP | Tools
+		-- H) INTERFACE: Quick | Merge | Economy | Combat | ESP | Tools
 		-- ======================================================
 		local function simple(sec, key, title, desc)
 			ctl[key] = AddToggle(sec, title, desc, false, function(on)
@@ -2798,23 +3126,21 @@ RegisterGame({
 			end)
 		end
 
-		-- ---------- QUICK (painel principal: liga e anda normalmente) ----------
+		-- ---------- QUICK ----------
 		local pq = ctx.Page("Quick", ctx.Icons.Bolt)
 		do
 			local qs = pq.Section("Main Automation")
-			ctl.Merge = AddToggle(qs, "Auto Merge", "Walks (no teleport) to equal units in your base", false, function(on)
+			ctl.Merge = AddToggle(qs, "Auto Merge", "Clone picks a unit, merges with its twin, drops if none", false, function(on)
 				cfg.Merge = on
 				if on then
 					ensureBase()
 					if cfg.AutoLearn and not learned then startLearning(600, true) end
 				end
 			end)
-			-- quiet = true: Auto Upgrade não mostra pop-up nem toca som
 			ctl.Upgrade = AddToggle(qs, "Auto Upgrade", "Silent. No menu opens on your screen", false, function(on)
 				cfg.Upgrade = on
 				if on then ensureButtonTracking() end
 			end, true)
-			-- quiet = true: Auto Rebirth não mostra pop-up nem toca som
 			ctl.Rebirth = AddToggle(qs, "Auto Rebirth", "Silent. Careful: resets your progress", false, function(on)
 				cfg.Rebirth = on
 				if on then ensureButtonTracking() end
@@ -2827,7 +3153,8 @@ RegisterGame({
 			Refs.qPairs  = AddInfo(qi, "Pairs ready", "0")
 			Refs.qMerges = AddInfo(qi, "Merges done", "0")
 			Refs.qClicks = AddInfo(qi, "Silent clicks", "0")
-			AddText(qi, "Ligue Auto Merge e ande normalmente: o personagem anda sozinho até os pares da sua base (sem teleporte). Se você mexer no movimento, ele pausa e retoma quando você parar. Rebirth e Upgrade clicam por trás, sem nada aparecer na tela.")
+			Refs.qGhost  = AddInfo(qi, "Ghost clone", "Standby")
+			AddText(qi, "Ligue Auto Merge e pode deixar: um clone seu fica parado onde você estava (a câmera segue ele) e seu corpo, invisível, pega as unidades, leva até a igual e junta. Se não houver igual, solta. Quando acabam os pares, você volta a ter o controle.")
 		end
 
 		-- ---------- MERGE ----------
@@ -2860,9 +3187,16 @@ RegisterGame({
 			AddToggle(afk, "AFK Disable 3D Rendering", "Black screen, minimum CPU/GPU", false, function(on) ctx.SetNoRender(on) end)
 
 			local am = pm.Section("Auto Merge")
-			AddSlider(am, "Merge delay", 0.03, 1.5, cfg.MergeDelay, 0.01, "s", function(v) cfg.MergeDelay = v end)
-			AddSlider(am, "Walk timeout", 4, 20, cfg.WalkTimeout, 1, "s", function(v) cfg.WalkTimeout = v end)
-			AddButton(am, "Merge Now", function()
+			AddToggle(am, "Invisible ghost clone", "Clone stays put, your real body works invisibly", cfg.Ghost, function(on)
+				cfg.Ghost = on
+				if not on then ghostStop() end
+			end)
+			AddToggle(am, "Fast glide", "Off = walks normally (slower, legit-looking)", cfg.Glide, function(on) cfg.Glide = on end)
+			AddSlider(am, "Glide speed", 40, 400, cfg.GlideSpeed, 5, " st/s", function(v) cfg.GlideSpeed = v end)
+			AddSlider(am, "Settle delay", 0.02, 0.4, cfg.Settle, 0.01, "s", function(v) cfg.Settle = v end)
+			AddSlider(am, "Merge delay", 0.02, 1.5, cfg.MergeDelay, 0.01, "s", function(v) cfg.MergeDelay = v end)
+			AddSlider(am, "Travel timeout", 3, 20, cfg.WalkTimeout, 1, "s", function(v) cfg.WalkTimeout = v end)
+			AddButton(am, "Merge Now (one round)", function()
 				if ensureBase() then mergeOnce = true else ctx.Notify("Merge", "Set your base first", 3) end
 			end)
 			Refs.mUnits  = AddInfo(am, "Units in my base", "0")
@@ -2885,7 +3219,7 @@ RegisterGame({
 				cfg.BaseRadius = v
 				if base.center and not base.model then base.radius = v end
 			end)
-			AddText(mb, "Fique no centro da sua base e toque em Set Base Here se a detecção automática não achar. Só unidades dentro dessa área são mescladas. Depois disso você pode andar para onde quiser.")
+			AddText(mb, "Fique no centro da sua base e toque em Set Base Here se a detecção automática não achar. Só unidades dentro dessa área são mescladas.")
 
 			local mm = pm.Section("Method")
 			AddToggle(mm, "Use learned remote", "Fastest: replays the real merge call", true, function(on) cfg.UseRemote = on end)
@@ -2897,7 +3231,6 @@ RegisterGame({
 				env.__ShadowMiniLearn = nil
 				Refs.mRemote.Text = "None"
 			end)
-			AddToggle(mm, "Drag unit onto target", "Experimental: moves unit A onto unit B", false, function(on) cfg.Drag = on end)
 			AddInput(mm, "Unit names (optional)", "ex: soldier, tank", "", function(text)
 				cfg.UnitWords = splitWords(text)
 				scan.t = 0
@@ -2907,6 +3240,7 @@ RegisterGame({
 				cfg.MergeBtn = on
 				if on then ensureButtonTracking() end
 			end)
+			AddText(mm, "Como pegar/soltar: o script usa os prompts da unidade (Pick / Grab / Hold... e Drop / Place...) e o botão 'Drop' da tela, se existir. Se o seu jogo usa outros nomes, rode Scan My Base Units na aba Tools e me mande o resultado.")
 		end
 
 		-- ---------- ECONOMY ----------
@@ -2928,7 +3262,7 @@ RegisterGame({
 			local sl = pe.Section("Silent Mode")
 			AddToggle(sl, "Silent clicks", "Works with the game menu closed", true, function(on) cfg.Silent = on end)
 			AddToggle(sl, "Mouse fallback", "Virtual mouse if no signal works (visible buttons only)", false, function(on) cfg.MouseFallback = on end)
-			AddText(sl, "No modo silencioso o script aciona os botões por trás da interface: nada abre na tela e seu mouse/dedo continua livre para andar. Deixe o Mouse fallback desligado, ele usa clique de mouse real.")
+			AddText(sl, "No modo silencioso o script aciona os botões por trás da interface: nada abre na tela e seu mouse/dedo continua livre. Deixe o Mouse fallback desligado, ele usa clique de mouse real.")
 
 			local ex = pe.Section("Extras")
 			simple(ex, "Equip", "Auto Equip Best", "Clicks equip best / equip all")
@@ -3006,7 +3340,7 @@ RegisterGame({
 				ESP.SetEnabled("MiniTargets", on)
 			end)
 			AddSlider(es, "ESP max distance", 100, 2000, ESP.MaxDist, 50, "", function(v) ESP.MaxDist = v end)
-			AddText(es, "Cores: dourado = evento/airdrop, vermelho = camp, rosa = território. Pares de merge brilham na mesma cor.")
+			AddText(es, "Cores: dourado = evento/airdrop, vermelho = camp, azul = território. Pares de merge brilham na mesma cor.")
 		end
 
 		-- ---------- TOOLS ----------
@@ -3056,7 +3390,9 @@ RegisterGame({
 				local sc = scanUnits(true)
 				local out = {}
 				for key, list in pairs(sc.groups) do
-					table.insert(out, #list .. "x | " .. key .. " | " .. list[1]:GetFullName())
+					local pr = {}
+					for _, d in ipairs(unitPrompts(list[1])) do pr[#pr + 1] = promptTextOf(d) end
+					table.insert(out, #list .. "x | " .. key .. " | " .. list[1]:GetFullName() .. " | prompts: " .. table.concat(pr, " / "))
 				end
 				dump(out, "Base Units")
 			end)
@@ -3093,6 +3429,7 @@ RegisterGame({
 					Refs.qPairs.Text = tostring(scan.pairs)
 					Refs.qMerges.Text = tostring(stats.merges)
 					Refs.qClicks.Text = tostring(stats.clicks)
+					Refs.qGhost.Text = ghost.active and (carry and "Carrying unit" or "Working") or "Standby"
 					Refs.aStatus.Text = atk.status
 					Refs.aTarget.Text = atk.target
 					Refs.aCaps.Text = tostring(stats.captures)
@@ -3114,6 +3451,7 @@ RegisterGame({
 			env.__ShadowHookFn = nil
 			for _, k in ipairs(DUE_KEYS) do cfg[k] = false end
 			cfg.Merge, cfg.Attack, cfg.AutoCapture = false, false, false
+			ghostStop()
 			stopWalk()
 			restoreInstant()
 		end)
@@ -3123,43 +3461,32 @@ RegisterGame({
 -- ================================================================= --
 -- 13. JOGO: BLOX FRUITS
 --  Sub-abas: Farm | Stats | Items | Misc
---
---  AUTO FARM: aceita a quest pelo SEU nível, acha o mob mais próximo,
---  fica acima e atrás dele e ataca com a arma escolhida.
---  AUTO STATS: distribui pontos no atributo escolhido.
---  AUTO COLLECT: vai até baús e frutas do mapa e pega.
---  AUTO HAKI: religa o Haki de armamento depois de morrer.
---
 --  Remotes, quests e nomes de mobs seguem a Primeira Sea e podem mudar
---  quando o jogo atualiza. Confira com "Scan enemies" e "Scan remotes"
---  (aba Misc). Em outras Seas use "Manual quest" no Farm.
+--  quando o jogo atualiza. Confira com "Scan enemies" e "Scan remotes".
 -- ================================================================= --
 RegisterGame({
 	Name = "Blox Fruits",
 	TabName = "Blox Fruits",
 	Icon = ICONS.Combat,
-	PlaceIds = {2753915549, 4442272183, 7449423635},   -- Primeira, Segunda e Terceira Sea
+	PlaceIds = {2753915549, 4442272183, 7449423635},
 	GameIds = {},
 	Names = {"Blox Fruits"},
-	-- Plano B: o jogo tem o remote CommF_ (nome em inglês, independe de idioma)
 	Detect = function()
 		return game:GetService("ReplicatedStorage"):FindFirstChild("CommF_", true) ~= nil
 	end,
 	Build = function(ctx)
-		-- ======================================================
 		-- 1) ESTADO E CONFIGURAÇÃO
-		-- ======================================================
 		local running = true
 		local status = "Idle"
 		local kills = 0
-		local counted = setmetatable({}, {__mode = "k"})     -- mobs já contados como mortos
-		local tried = setmetatable({}, {__mode = "k"})       -- part -> {n = tentativas, nextAt = tempo}
+		local counted = setmetatable({}, {__mode = "k"})
+		local tried = setmetatable({}, {__mode = "k"})
 		local lastNote = {}
 		local lastAccept, acceptFails = 0, 0
 		local lastAttack, lastBuso, lastEquip = 0, 0, 0
-		local spot = nil                                     -- posição salva (fallback do farm)
+		local spot = nil
 		local target, targetPart = nil, nil
-		local pickups = {}                                   -- {part, kind, inst}
+		local pickups = {}
 		local cfg = {
 			Farm = false, Manual = false, QuestName = "", QuestLvl = 1, MobName = "",
 			Weapon = "Melee", Speed = 200, Height = 6, Behind = 3,
@@ -3170,8 +3497,6 @@ RegisterGame({
 		local STAT_NAMES = {"Melee", "Defense", "Sword", "Gun", "Demon Fruit", "Blox Fruit"}
 		local WEAPONS = {"Melee", "Sword", "Gun", "Blox Fruit"}
 
-		-- Quests da Primeira Sea (aproximado): nível mínimo/máximo -> quest, nível da quest e mob.
-		-- Se o seu nível cair num intervalo errado, use "Manual quest" no Farm.
 		local QUESTS = {
 			{min = 1,   max = 13,    quest = "BanditQuest1",  qlvl = 1, mob = "Bandit"},
 			{min = 14,  max = 19,    quest = "JungleQuest",   qlvl = 1, mob = "Monkey"},
@@ -3191,11 +3516,9 @@ RegisterGame({
 			{min = 275, max = 99999, quest = "ColosseumQuest", qlvl = 2, mob = "Gladiator"},
 		}
 
-		-- ======================================================
 		-- 2) UTILITÁRIOS
-		-- ======================================================
 		local function cleanKey(s)
-			local t = string.gsub(tostring(s or ""), "%b[]", "")     -- tira "[Lv. 10]" etc.
+			local t = string.gsub(tostring(s or ""), "%b[]", "")
 			return (string.gsub(string.lower(t), "[^%w]", ""))
 		end
 
@@ -3217,7 +3540,6 @@ RegisterGame({
 			return matchFrom(WEAPONS, text)
 		end
 
-		-- Avisos repetidos ficam limitados (no máximo um igual a cada 6s)
 		local function note(msg, force)
 			local now = os.clock()
 			if not force and lastNote[msg] and now - lastNote[msg] < 6 then return end
@@ -3240,9 +3562,7 @@ RegisterGame({
 			Notify("Blox Fruits", title .. " (" .. #lines .. " linhas) - copiado / F9", 4)
 		end
 
-		-- ======================================================
 		-- 3) REMOTE (CommF_) COM TEMPO LIMITE
-		-- ======================================================
 		local commF = nil
 		local function getRemote()
 			if commF and commF.Parent then return commF end
@@ -3251,7 +3571,6 @@ RegisterGame({
 			return commF
 		end
 
-		-- Chama o remote sem travar o loop se o servidor demorar para responder
 		local function invoke(timeout, ...)
 			local rf = getRemote()
 			if not rf then return false, "CommF_ not found" end
@@ -3277,10 +3596,7 @@ RegisterGame({
 			return v ~= nil and (not v:IsA("BoolValue") or v.Value)
 		end
 
-		-- ======================================================
 		-- 4) MOVIMENTO
-		-- ======================================================
-		-- Evita CFrame.lookAt degenerado (alvo na mesma vertical)
 		local function lookCF(pos, to)
 			local d = to - pos
 			if Vector3.new(d.X, 0, d.Z).Magnitude < 0.5 then
@@ -3289,7 +3605,6 @@ RegisterGame({
 			return CFrame.lookAt(pos, to)
 		end
 
-		-- Anda até "goal" na velocidade do slider, olhando para "look"
 		local function moveToward(goal, look, dt)
 			local root = getRoot()
 			if not root then return end
@@ -3303,9 +3618,7 @@ RegisterGame({
 			root.AssemblyLinearVelocity = Vector3.zero
 		end
 
-		-- ======================================================
 		-- 5) QUEST, MOBS E ARMAS
-		-- ======================================================
 		local function currentQuest()
 			if cfg.Manual then
 				if cfg.QuestName == "" then return nil end
@@ -3346,7 +3659,6 @@ RegisterGame({
 			return table.concat(out, " | ")
 		end
 
-		-- Pede a quest em outra thread: o farm continua andando enquanto o servidor responde
 		local function acceptQuest(q, now)
 			lastAccept = now
 			task.spawn(function()
@@ -3355,7 +3667,6 @@ RegisterGame({
 			end)
 		end
 
-		-- Procura o mob mais próximo com o nome certo (ignora o que está morto)
 		local function findEnemy(mob)
 			local root = getRoot()
 			if not root then return nil, nil end
@@ -3376,7 +3687,6 @@ RegisterGame({
 			return best, bestPart
 		end
 
-		-- Deixa a arma escolhida na mão (Tool.ToolTip: Melee / Sword / Gun / Blox Fruit)
 		local function equipWeapon(now)
 			local hum, char = getHum(), LocalPlayer.Character
 			if not hum or not char then return nil end
@@ -3409,9 +3719,7 @@ RegisterGame({
 			return found
 		end
 
-		-- ======================================================
 		-- 6) ITENS DO MAPA (baús e frutas)
-		-- ======================================================
 		local function kindOf(inst)
 			local n = string.lower(inst.Name)
 			if string.find(n, "chest", 1, true) then return "Chest" end
@@ -3472,7 +3780,7 @@ RegisterGame({
 		local function touchPart(root, part, now)
 			local t = tried[part] or {n = 0, nextAt = 0}
 			t.n = t.n + 1
-			t.nextAt = now + (t.n >= 6 and 120 or 5)     -- desiste por um tempo se não der certo
+			t.nextAt = now + (t.n >= 6 and 120 or 5)
 			tried[part] = t
 			if typeof(firetouchinterest) == "function" then
 				pcall(firetouchinterest, root, part, 0)
@@ -3495,10 +3803,7 @@ RegisterGame({
 			end
 		end
 
-		-- ======================================================
 		-- 7) CÉREBRO DO FARM
-		-- ======================================================
-		-- Devolve true quando usou o tick para farmar (andar / atacar)
 		local function farmTick(now, dt)
 			local q = currentQuest()
 			if not q then
@@ -3507,7 +3812,6 @@ RegisterGame({
 				return false
 			end
 
-			-- Aceita a quest (com intervalo, para não spammar o servidor)
 			if questVisible() then
 				acceptFails = 0
 			elseif now - lastAccept >= 6 then
@@ -3516,7 +3820,6 @@ RegisterGame({
 				acceptQuest(q, now)
 			end
 
-			-- Conta o mob que acabou de morrer e escolhe outro se precisar
 			local thum = target and target:FindFirstChildOfClass("Humanoid")
 			if target and thum and thum.Health <= 0 and not counted[target] then
 				counted[target] = true
@@ -3534,7 +3837,6 @@ RegisterGame({
 			if not root then return false end
 			local tp = targetPart.Position
 			status = "Farming " .. target.Name
-			-- Fica acima e atrás do mob (fora do alcance do golpe dele)
 			local aim = tp + Vector3.new(0, cfg.Height, 0) - targetPart.CFrame.LookVector * cfg.Behind
 			moveToward(aim, tp, dt)
 			if (root.Position - tp).Magnitude <= 25 then
@@ -3570,9 +3872,7 @@ RegisterGame({
 			if not cfg.Farm then status = "Idle" end
 		end
 
-		-- ======================================================
-		-- 8) ESP DOS ITENS (usa a lista já escaneada)
-		-- ======================================================
+		-- 8) ESP DOS ITENS
 		ESP.Register("BFChests", function()
 			local out = {}
 			for _, p in ipairs(pickups) do
@@ -3589,17 +3889,15 @@ RegisterGame({
 			for _, p in ipairs(pickups) do
 				if p.kind == "Fruit" and p.part.Parent then
 					out[#out + 1] = {part = p.part, hl = p.inst:IsA("Model") and p.inst or nil,
-						text = "FRUIT", color = Color3.fromRGB(190, 90, 255)}
+						text = "FRUIT", color = Color3.fromRGB(150, 110, 255)}
 				end
 			end
 			return out
 		end)
 
-		-- ======================================================
 		-- 9) INTERFACE
-		-- ======================================================
-		local togs = {}     -- controles dos toggles (chave = nome em cfg)
-		local vals = {}     -- labels de status
+		local togs = {}
+		local vals = {}
 
 		local function applyESP()
 			ESP.SetEnabled("BFChests", cfg.ESPChests)
@@ -3650,7 +3948,7 @@ RegisterGame({
 			dump("Remotes (ReplicatedStorage)", lines)
 		end
 
-		-- ---------- FARM ----------
+		-- FARM
 		local pFarm = ctx.Page("Farm", ctx.Icons.Combat)
 		do
 			local sec = pFarm.Section("Auto Farm")
@@ -3714,7 +4012,7 @@ RegisterGame({
 			AddText(ss, "Stand next to the quest NPC once before turning on Auto Farm, so the quest can start. Manual quest works for other Seas.")
 		end
 
-		-- ---------- STATS ----------
+		-- STATS
 		local pStats = ctx.Page("Stats", ctx.Icons.Bolt)
 		do
 			local sec = pStats.Section("Auto Stats")
@@ -3742,7 +4040,7 @@ RegisterGame({
 			vals.TargetStat = AddInfo(sec, "Target stat", cfg.Stat)
 		end
 
-		-- ---------- ITEMS ----------
+		-- ITEMS
 		local pItems = ctx.Page("Items", ctx.Icons.Economy)
 		do
 			local sec = pItems.Section("Auto collect")
@@ -3768,7 +4066,7 @@ RegisterGame({
 			vals.Fruits = AddInfo(sc, "Fruits found", "0")
 		end
 
-		-- ---------- MISC ----------
+		-- MISC
 		local pMisc = ctx.Page("Misc", ctx.Icons.Settings)
 		do
 			local sh = pMisc.Section("Haki")
@@ -3785,10 +4083,7 @@ RegisterGame({
 			AddButton(st, "Stop everything", stopAll, true)
 		end
 
-		-- ======================================================
-		-- 10) LOOPS EM SEGUNDO PLANO (todos checam "running")
-		-- ======================================================
-		-- Brain do farm / coleta (~30 Hz)
+		-- 10) LOOPS EM SEGUNDO PLANO
 		task.spawn(function()
 			local last = os.clock()
 			local lastErr = 0
@@ -3805,7 +4100,6 @@ RegisterGame({
 			end
 		end)
 
-		-- Varredura de baús e frutas (2.5s)
 		task.spawn(function()
 			while running and ctx.ScreenGui.Parent do
 				pcall(scanPickups)
@@ -3813,7 +4107,6 @@ RegisterGame({
 			end
 		end)
 
-		-- Auto Stats
 		task.spawn(function()
 			while running and ctx.ScreenGui.Parent do
 				local wait = 0.5
@@ -3836,7 +4129,6 @@ RegisterGame({
 			end
 		end)
 
-		-- Auto Haki (religa depois de morrer; no máximo 1 pedido a cada 10s)
 		task.spawn(function()
 			while running and ctx.ScreenGui.Parent do
 				if cfg.Haki and getRoot() and not hasBuso() and os.clock() - lastBuso >= 10 then
@@ -3848,7 +4140,6 @@ RegisterGame({
 			end
 		end)
 
-		-- Painel de status (2x por segundo)
 		task.spawn(function()
 			while running and ctx.ScreenGui.Parent do
 				pcall(function()
@@ -3872,9 +4163,7 @@ RegisterGame({
 			end
 		end)
 
-		-- ======================================================
-		-- 11) DESCARREGAR (ao fechar o hub ou trocar de jogo)
-		-- ======================================================
+		-- 11) DESCARREGAR
 		ctx.OnUnload(function()
 			running = false
 			for key in pairs(togs) do cfg[key] = false end
@@ -3886,15 +4175,13 @@ RegisterGame({
 })
 
 -- Detecção do jogo atual (só carrega o script se ESTE for o jogo dele).
--- Em qualquer outro jogo nenhuma aba de jogo é criada.
--- Camadas: 1) IDs exatos  2) nome do jogo (com tentativas)  3) conteúdo do jogo
 task.spawn(function()
 	-- 1) PlaceId / GameId
 	for _, def in ipairs(GameModules) do
 		if matchesGame(def, nil) then loadGame(def) end
 	end
 
-	-- 2) Nome vindo do Roblox (tenta algumas vezes: às vezes a primeira chamada falha)
+	-- 2) Nome vindo do Roblox
 	local gameName
 	for _ = 1, 4 do
 		local ok, info = pcall(function() return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId) end)
@@ -3907,7 +4194,7 @@ task.spawn(function()
 		if matchesGame(def, gameName) then loadGame(def) end
 	end
 
-	-- 3) Plano B: o jogo carrega aos poucos, então tenta de novo por ~1 minuto
+	-- 3) Plano B: conteúdo do jogo, tenta por ~1 minuto
 	for _ = 1, 12 do
 		if not ScreenGui.Parent then return end
 		local pending = false
@@ -3928,7 +4215,7 @@ task.spawn(function()
 end)
 
 -- ================================================================= --
--- 13. LOOPS, ABRIR/FECHAR, ARRASTE, UNLOAD E INICIALIZAÇÃO
+-- 14. LOOPS, ABRIR/FECHAR, ARRASTE, UNLOAD E INICIALIZAÇÃO
 -- ================================================================= --
 do
 	-- Pulo infinito
@@ -3957,7 +4244,7 @@ do
 		end
 	end))
 
-	-- Heartbeat: velocidade, pulo, fly, iluminação (só escreve se mudou)
+	-- Heartbeat: velocidade, pulo, fly, iluminação
 	track(RunService.Heartbeat:Connect(function(dt)
 		if State.SpeedOn or State.JumpOn then
 			local hum = getHum()
@@ -4021,22 +4308,22 @@ do
 		end
 	end))
 
-	-- RenderStepped: FOV, neve, FPS, Performance Guard e estatísticas
-	local frames, lastStat, snowAcc = 0, os.clock(), 0
+	-- RenderStepped: FOV, estrelas, FPS, Performance Guard e estatísticas
+	local frames, lastStat, starAcc = 0, os.clock(), 0
 	track(RunService.RenderStepped:Connect(function(dt)
 		if State.FovOn then
 			local cam = workspace.CurrentCamera
 			if cam and cam.FieldOfView ~= State.Fov then cam.FieldOfView = State.Fov end
 		end
 
-		if isOpen and State.Snow and not Perf.Lite then
-			snowAcc = snowAcc + dt
-			if snowAcc >= 1 / 24 then
-				updateSnow(snowAcc)
-				snowAcc = 0
+		if isOpen and State.Stars and not Perf.Lite then
+			starAcc = starAcc + dt
+			if starAcc >= 1 / 24 then
+				updateStars(starAcc)
+				starAcc = 0
 			end
 		else
-			snowAcc = 0
+			starAcc = 0
 		end
 
 		frames = frames + 1
@@ -4069,7 +4356,7 @@ do
 		end
 	end))
 
-	-- Loop do ESP (4x/s, mais lento no modo Lite)
+	-- Loop do ESP
 	task.spawn(function()
 		while ScreenGui.Parent do
 			local any = false
@@ -4112,22 +4399,21 @@ do
 			hubCenter = clampCenter(hubCenter)
 			MainFrame.Position = UDim2.fromOffset(hubCenter.X, hubCenter.Y)
 			MainFrame.Visible = true
-			SnowContainer.Visible = State.Snow and not Perf.Lite
+			StarContainer.Visible = State.Stars and not Perf.Lite
 			HubScale.Scale = currentScale * 0.9
 			MainFrame.GroupTransparency = 1
 			tween(MainFrame, 0.35, {GroupTransparency = 0})
 			tween(HubScale, 0.4, {Scale = currentScale}, Enum.EasingStyle.Back)
-			tween(FloatingBtn, 0.4, {Rotation = 180, BackgroundColor3 = COLORS.Card})
-			tween(BtnStroke, 0.4, {Color = COLORS.AccentGlow, Transparency = 0})
+			tween(FloatingBtn, 0.4, {Rotation = 180})
+			tween(BtnStroke, 0.4, {Color = COLORS.Cyan, Transparency = 0})
 		else
 			tween(MainFrame, 0.25, {GroupTransparency = 1})
 			tween(HubScale, 0.25, {Scale = currentScale * 0.9}, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
-			tween(FloatingBtn, 0.4, {Rotation = 0, BackgroundColor3 = COLORS.Sidebar})
-			tween(BtnStroke, 0.4, {Color = COLORS.Accent, Transparency = 0.3})
+			tween(FloatingBtn, 0.4, {Rotation = 0})
+			tween(BtnStroke, 0.4, {Color = COLORS.AccentGlow, Transparency = 0.2})
 			task.delay(0.27, function()
 				if animToken == token and not isOpen then
 					MainFrame.Visible = false
-					SnowContainer.Visible = false
 				end
 			end)
 		end
@@ -4180,10 +4466,10 @@ do
 		end))
 	end
 
-	local hubMoved, hubStart, ghost = false, hubCenter, hubCenter
+	local hubMoved, hubStart, ghostPos = false, hubCenter, hubCenter
 	local function attachHubDrag(handle)
 		makeDrag(handle,
-			function() hubMoved = false; hubStart = hubCenter; ghost = hubCenter end,
+			function() hubMoved = false; hubStart = hubCenter; ghostPos = hubCenter end,
 			function(delta)
 				if not hubMoved and delta.Magnitude > 3 then
 					hubMoved = true
@@ -4192,14 +4478,14 @@ do
 					DragGhost.Visible = true
 				end
 				if hubMoved then
-					ghost = clampCenter(hubStart + delta)
-					DragGhost.Position = UDim2.fromOffset(ghost.X, ghost.Y)
+					ghostPos = clampCenter(hubStart + delta)
+					DragGhost.Position = UDim2.fromOffset(ghostPos.X, ghostPos.Y)
 				end
 			end,
 			function()
 				if hubMoved then
 					hubMoved = false
-					hubCenter = ghost
+					hubCenter = ghostPos
 					DragGhost.Visible = false
 					InputBlocker.Visible = false
 					tween(MainFrame, 0.3, {Position = UDim2.fromOffset(hubCenter.X, hubCenter.Y)})
