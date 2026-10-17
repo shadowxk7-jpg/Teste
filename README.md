@@ -1,4563 +1,740 @@
 -- ================================================================= --
---   DARK SHADOW HUB v5.0  |  COSMIC EDITION                          --
---   Tema espacial (azul elétrico + relâmpago), estrelas, planeta,    --
---   Auto Merge "carrega e junta" com CLONE FANTASMA invisível,       --
---   Auto Rebirth / Upgrade silenciosos, sons, scripts por jogo.      --
+--  UNIVERSAL: AIMBOT PARA JOGOS DE TIRO  (aba "Aimbot")
+--  Funciona em qualquer jogo de tiro (inclusive os que você criar):
+--  só usa Players, Humanoid, câmera e raycast padrão do Roblox.
+--
+--  REGRA: nada roda até você ligar o botão "Aimbot". Ao desligar, tudo
+--  é desconectado e todos os efeitos somem da tela.
+--
+--  COMO ENCAIXAR: cole este bloco INTEIRO no seu script, logo ACIMA de:
+--      -- 12. JOGO: MERGE A MINI ARMY
+--  (depois do bloco "11. SISTEMA DE SCRIPTS POR JOGO"). Não mexe em
+--  nenhuma outra linha do seu script.
 -- ================================================================= --
---  ÍNDICE
---   1. Serviços e ambiente
---   2. Utilitários, tema e sons
---   3. Estado global
---   4. Interface base (janela, estrelas, sidebar, header)
---   5. Framework de abas e sub-abas
---   6. Notificações
---   7. Componentes
---   8. Busca
---   9. Núcleo: movimento, visuais, Performance Guard, ESP, hook
---  10. Abas: Home / Player / Main / Settings
---  11. Sistema de scripts por jogo
---  12. Jogo: Merge a Mini Army
---  13. Jogo: Blox Fruits
---  14. Loops, abrir/fechar, arraste, unload, inicialização
--- ================================================================= --
-
-if not game:IsLoaded() then game.Loaded:Wait() end
-
--- ==========================================
--- 1. SERVIÇOS E AMBIENTE
--- ==========================================
-local TweenService     = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
-local RunService       = game:GetService("RunService")
-local Players          = game:GetService("Players")
-local Lighting         = game:GetService("Lighting")
-local TeleportService  = game:GetService("TeleportService")
-local GuiService       = game:GetService("GuiService")
-
-local LocalPlayer = Players.LocalPlayer
-local ParentGui   = (gethui and gethui()) or LocalPlayer:WaitForChild("PlayerGui")
-local env         = (getgenv and getgenv()) or _G
-
--- Descarrega instância anterior (evita conexões duplicadas)
-if env.__ShadowHubUnload then pcall(env.__ShadowHubUnload) end
-for _, n in ipairs({"ShadowTechHub", "ShadowESP"}) do
-	local o = ParentGui:FindFirstChild(n)
-	if o then o:Destroy() end
-end
-
--- ==========================================
--- 2. UTILITÁRIOS, TEMA E SONS
--- ==========================================
-local IS_TOUCH = UserInputService.TouchEnabled -- celular / emulador
-
-local connections = {}
-local function track(conn)
-	table.insert(connections, conn)
-	return conn
-end
-
-local function create(class, props)
-	local inst = Instance.new(class)
-	local parent
-	for k, v in pairs(props or {}) do
-		if k == "Parent" then parent = v else inst[k] = v end
-	end
-	inst.Parent = parent
-	return inst
-end
-
-local function corner(inst, r)
-	return create("UICorner", {CornerRadius = UDim.new(0, r), Parent = inst})
-end
-
--- Paleta tirada da imagem: preto-azulado profundo, azul elétrico, relâmpago branco-azulado
-local COLORS = {
-	Background   = Color3.fromRGB(3, 5, 16),
-	Sidebar      = Color3.fromRGB(4, 8, 24),
-	Card         = Color3.fromRGB(7, 12, 36),
-	CardHeader   = Color3.fromRGB(11, 20, 62),
-	CardHover    = Color3.fromRGB(18, 34, 96),
-	SubTabBg     = Color3.fromRGB(8, 14, 42),
-	SubTabActive = Color3.fromRGB(14, 36, 112),
-	Accent       = Color3.fromRGB(24, 78, 255),
-	AccentDark   = Color3.fromRGB(8, 38, 190),
-	AccentGlow   = Color3.fromRGB(80, 150, 255),
-	Cyan         = Color3.fromRGB(110, 215, 255),
-	Star         = Color3.fromRGB(205, 228, 255),
-	TextMain     = Color3.fromRGB(226, 238, 255),
-	TextDark     = Color3.fromRGB(108, 134, 190),
-	Stroke       = Color3.fromRGB(16, 32, 98),
-	SwitchOff    = Color3.fromRGB(14, 22, 62),
-	Green        = Color3.fromRGB(80, 220, 140),
-	Danger       = Color3.fromRGB(200, 60, 90),
-	Gold         = Color3.fromRGB(255, 205, 60),
-}
-
-local function stroke(inst, color, thickness, transparency)
-	return create("UIStroke", {
-		Color = color or COLORS.Stroke,
-		Thickness = thickness or 1,
-		Transparency = transparency or 0,
-		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-		Parent = inst,
-	})
-end
-
-local function tween(inst, t, props, style, dir)
-	local tw = TweenService:Create(inst, TweenInfo.new(t, style or Enum.EasingStyle.Quart, dir or Enum.EasingDirection.Out), props)
-	tw:Play()
-	return tw
-end
-
-local function label(props)
-	props.BackgroundTransparency = 1
-	props.Font = props.Font or Enum.Font.GothamMedium
-	props.TextColor3 = props.TextColor3 or COLORS.TextMain
-	props.TextSize = props.TextSize or 12
-	props.TextXAlignment = props.TextXAlignment or Enum.TextXAlignment.Left
-	return create("TextLabel", props)
-end
-
-local orderCounters = setmetatable({}, {__mode = "k"})
-local function nextOrder(obj)
-	orderCounters[obj] = (orderCounters[obj] or 0) + 1
-	return orderCounters[obj]
-end
-
-local function hasAny(text, words)
-	for i = 1, #words do
-		if string.find(text, words[i], 1, true) then return true end
-	end
-	return false
-end
-
-local function splitWords(text)
-	local words = {}
-	for w in string.gmatch(string.lower(text or ""), "[^,;]+") do
-		w = string.gsub(w, "^%s*(.-)%s*$", "%1")
-		if #w > 0 then words[#words + 1] = w end
-	end
-	return words
-end
-
--- Cache do personagem (evita FindFirstChild a cada frame)
-local cHum, cRoot
-local function getHum()
-	local c = LocalPlayer.Character
-	if not c then return nil end
-	if cHum and cHum.Parent == c then return cHum end
-	cHum = c:FindFirstChildOfClass("Humanoid")
-	return cHum
-end
-
-local function getRoot()
-	local c = LocalPlayer.Character
-	if not c then return nil end
-	if cRoot and cRoot.Parent == c then return cRoot end
-	cRoot = c:FindFirstChild("HumanoidRootPart")
-	return cRoot
-end
-
-local clipboardFn = setclipboard or toclipboard or nil
-
--- ICONES (troque os IDs se algum não carregar)
-local ICONS = {
-	Logo     = "rbxassetid://10723415903",
-	Home     = "rbxassetid://10723354417",
-	Main     = "rbxassetid://10734950309",
-	Player   = "rbxassetid://10747373176",
-	Settings = "rbxassetid://10734950020",
-	Search   = "rbxassetid://10734938520",
-	Merge    = "rbxassetid://10734976722",
-	Economy  = "rbxassetid://10734937986",
-	Combat   = "rbxassetid://10734938210",
-	Server   = "rbxassetid://10734938384",
-	Shield   = "rbxassetid://10734938450",
-	Bolt     = "rbxassetid://10734950309",
-}
-
--- EFEITOS SONOROS
-local Sfx = {
-	Enabled = true,
-	Volume  = 0.5,
-	Id      = "rbxassetid://6895079853",
-	pool    = {},
-	last    = {},
-	holder  = nil,
-}
-local SFX_KINDS = {            -- {tom, ganho}
-	Click  = {1.00, 1.0},
-	On     = {1.30, 1.0},
-	Off    = {0.80, 1.0},
-	Open   = {1.10, 1.0},
-	Close  = {0.85, 1.0},
-	Notify = {1.60, 0.8},
-	Error  = {0.60, 1.0},
-	Slide  = {1.25, 0.4},
-}
-
-function Sfx.Play(kind, minGap)
-	if not Sfx.Enabled or Sfx.Volume <= 0 or not Sfx.holder then return end
-	local now = os.clock()
-	if minGap and Sfx.last[kind] and now - Sfx.last[kind] < minGap then return end
-	Sfx.last[kind] = now
-	local k = SFX_KINDS[kind] or SFX_KINDS.Click
-	local s = Sfx.pool[kind]
-	if not s or not s.Parent then
-		s = Instance.new("Sound")
-		s.Name = "Sfx_" .. kind
-		s.SoundId = Sfx.Id
-		s.Parent = Sfx.holder
-		Sfx.pool[kind] = s
-	end
-	pcall(function()
-		s.PlaybackSpeed = k[1]
-		s.Volume = math.clamp(Sfx.Volume * k[2], 0, 1)
-		s.TimePosition = 0
-		s:Play()
-	end)
-end
-
--- ==========================================
--- 3. ESTADO GLOBAL
--- ==========================================
-local isOpen = false
-local userScale = 1
-local currentScale = 1
-local toggleKey = Enum.KeyCode.RightShift
-local listeningKey = false
-local notificationsEnabled = true
-local activeTab = "Home"
-local startTime = os.time()
-local origMaxZoom = LocalPlayer.CameraMaxZoomDistance
-
-local State = {
-	Speed = 50, SpeedOn = false,
-	Jump = 100, JumpOn = false,
-	InfJump = false, Noclip = false,
-	Fly = false, FlySpeed = 60,
-	Fullbright = false, NoFog = false,
-	FovOn = false, Fov = 70,
-	AntiAfk = false, LowGfx = false,
-	NoRender = false, AutoRejoin = false,
-	Stars = true,
-}
-local Original = {}
-
--- Movimento (agrupado numa tabela para economizar variáveis locais)
-local Mv = {touched = {}, parts = {}, refresh = 0, fly = nil, vel = Vector3.zero, controls = nil}
-pcall(function()
-	Mv.controls = require(LocalPlayer:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule", 3)):GetControls()
-end)
-
--- Performance Guard (anti-lag automático)
-local Perf = {
-	Guard = true, LowFps = 35, CritFps = 22, AutoRestore = true,
-	Fps = 60, lowSec = 0, critSec = 0, goodSec = 0, flaps = 0,
-	autoAL = false, autoFB = false, alOn = false, ultraOn = false,
-	Lite = false, Status = "Monitoring", gfx = nil,
-}
-local PerfUI = {}  -- referências dos toggles de performance
-local Refs = {}    -- referências de labels da interface
-
--- ==========================================
--- 4. INTERFACE BASE
--- ==========================================
-local ScreenGui = create("ScreenGui", {
-	Name = "ShadowTechHub", ResetOnSpawn = false, IgnoreGuiInset = true,
-	DisplayOrder = 999, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = ParentGui,
-})
-Sfx.holder = ScreenGui
-
-local InputBlocker = create("TextButton", {
-	Name = "InputBlocker", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
-	Text = "", Visible = false, Modal = true, ZIndex = 1, Parent = ScreenGui,
-})
-
--- Botão flutuante (anel azul pulsante)
-local FloatingBtn = create("Frame", {
-	Name = "FloatingButton", Size = UDim2.fromOffset(48, 48), Position = UDim2.new(0, 16, 0.3, 0),
-	BackgroundColor3 = COLORS.Sidebar, BorderSizePixel = 0, Active = true, ZIndex = 10, Parent = ScreenGui,
-})
-corner(FloatingBtn, 24)
-local BtnStroke = stroke(FloatingBtn, COLORS.AccentGlow, 1.5, 0.2)
-create("UIGradient", {
-	Color = ColorSequence.new(Color3.fromRGB(14, 30, 100), Color3.fromRGB(2, 5, 20)),
-	Rotation = 90, Parent = FloatingBtn,
-})
-create("ImageLabel", {
-	Size = UDim2.fromOffset(24, 24), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
-	BackgroundTransparency = 1, Image = ICONS.Logo, ImageColor3 = COLORS.Cyan, Parent = FloatingBtn,
-})
-pcall(function()
-	TweenService:Create(BtnStroke, TweenInfo.new(1.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-		{Thickness = 3}):Play()
-end)
-
--- Janela principal (tamanho menor no celular)
-local HUB_W, HUB_H, SIDEBAR_W = 660, 420, 150
-if IS_TOUCH then HUB_W, HUB_H, SIDEBAR_W = 580, 340, 132 end
-local hubCenter = Vector2.new(0, 0)
-
-local MainFrame = create("CanvasGroup", {
-	Name = "MainHub", Size = UDim2.fromOffset(HUB_W, HUB_H), AnchorPoint = Vector2.new(0.5, 0.5),
-	BackgroundColor3 = COLORS.Background, BorderSizePixel = 0, Visible = false, Active = true,
-	ZIndex = 5, GroupTransparency = 1, Parent = ScreenGui,
-})
-corner(MainFrame, 16)
-create("UIGradient", {
-	Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(150, 185, 255)),
-	}),
-	Rotation = 90, Parent = MainFrame,
-})
--- Borda com degradê azul → ciano que gira devagar (efeito de energia)
 do
-	local ms = stroke(MainFrame, COLORS.AccentGlow, 1.6, 0.25)
-	local g = create("UIGradient", {
-		Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, COLORS.AccentDark),
-			ColorSequenceKeypoint.new(0.35, COLORS.Cyan),
-			ColorSequenceKeypoint.new(0.7, COLORS.Accent),
-			ColorSequenceKeypoint.new(1, COLORS.AccentDark),
-		}),
-		Parent = ms,
-	})
-	pcall(function()
-		TweenService:Create(g, TweenInfo.new(7, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1), {Rotation = 360}):Play()
-	end)
-end
-local HubScale = create("UIScale", {Scale = 1, Parent = MainFrame})
-
--- Céu estrelado dentro da janela (atrás de tudo): estrelas, nebulosas, planeta e estrela cadente
-local StarContainer = create("Frame", {
-	Name = "StarContainer", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
-	ClipsDescendants = true, Visible = true, ZIndex = 0, Parent = MainFrame,
-})
-local updateStars
-do
-	-- nebulosas (camadas translúcidas simulam brilho)
-	local function glow(xs, ys, size)
-		for i = 1, 3 do
-			local s = size * (1 - (i - 1) * 0.28)
-			local f = create("Frame", {
-				AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(xs, ys),
-				Size = UDim2.fromOffset(s, s), BackgroundColor3 = i == 3 and COLORS.AccentGlow or COLORS.Accent,
-				BackgroundTransparency = 0.93 - i * 0.012, BorderSizePixel = 0, ZIndex = 0, Parent = StarContainer,
-			})
-			corner(f, 500)
-		end
-	end
-	glow(0.35, 0.18, 300)
-	glow(0.85, 0.7, 340)
-	glow(0.5, 0.95, 260)
-
-	-- planeta com anel (como o pequeno planeta da imagem)
-	local planet = create("Frame", {
-		AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -22, 1, -16), Size = UDim2.fromOffset(54, 54),
-		BackgroundColor3 = COLORS.Accent, BackgroundTransparency = 0.25, BorderSizePixel = 0, ZIndex = 0, Parent = StarContainer,
-	})
-	corner(planet, 27)
-	create("UIGradient", {
-		Color = ColorSequence.new(COLORS.Cyan, Color3.fromRGB(4, 10, 50)), Rotation = 45, Parent = planet,
-	})
-	local ring = create("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(100, 22),
-		BackgroundTransparency = 1, Rotation = -18, ZIndex = 0, Parent = planet,
-	})
-	corner(ring, 20)
-	stroke(ring, COLORS.Cyan, 1.5, 0.35)
-
-	-- estrelas
-	local stars = {}
-	for i = 1, (IS_TOUCH and 28 or 52) do
-		local size = (math.random() < 0.15) and 3 or math.random(1, 2)
-		local frame = create("Frame", {
-			Size = UDim2.fromOffset(size, size), BackgroundColor3 = (math.random() < 0.3) and COLORS.Cyan or COLORS.Star,
-			BackgroundTransparency = 0.4, BorderSizePixel = 0, ZIndex = 0, Parent = StarContainer,
-		})
-		corner(frame, 3)
-		stars[i] = {frame = frame, x = math.random(), y = math.random(),
-			speed = math.random(2, 9) / 1000, tw = math.random(10, 40) / 10, seed = math.random(1, 100)}
-	end
-	updateStars = function(dt)
-		local now = os.clock()
-		for i = 1, #stars do
-			local s = stars[i]
-			s.x = (s.x - s.speed * dt) % 1
-			s.frame.Position = UDim2.fromScale(s.x, s.y)
-			s.frame.BackgroundTransparency = 0.15 + 0.7 * math.abs(math.sin(now * s.tw + s.seed))
-		end
-	end
-
-	-- estrela cadente de vez em quando
-	task.spawn(function()
-		while ScreenGui.Parent do
-			task.wait(math.random(40, 90) / 10)
-			if isOpen and State.Stars and not Perf.Lite then
-				local streak = create("Frame", {
-					Size = UDim2.fromOffset(70, 2), Rotation = 28, BackgroundColor3 = COLORS.Star, BorderSizePixel = 0,
-					Position = UDim2.fromScale(math.random(30, 90) / 100, -0.05), ZIndex = 0, Parent = StarContainer,
-				})
-				create("UIGradient", {
-					Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0)}),
-					Parent = streak,
-				})
-				local sx = streak.Position.X.Scale
-				tween(streak, 0.9, {Position = UDim2.fromScale(sx - 0.45, 0.6), BackgroundTransparency = 1}, Enum.EasingStyle.Quad)
-				task.delay(1, function() streak:Destroy() end)
-			end
-		end
-	end)
-end
-
-local DragGhost = create("Frame", {
-	Name = "DragGhost", AnchorPoint = Vector2.new(0.5, 0.5), Visible = false, BackgroundTransparency = 0.85,
-	BackgroundColor3 = COLORS.Accent, BorderSizePixel = 0, ZIndex = 20, Parent = ScreenGui,
-})
-corner(DragGhost, 16)
-stroke(DragGhost, COLORS.AccentGlow, 1.8)
-
-local function screenSize() return ScreenGui.AbsoluteSize end
-local function hubPixelSize() return Vector2.new(HUB_W, HUB_H) * currentScale end
-
-local function clampCenter(c)
-	local s, half = screenSize(), hubPixelSize() / 2
-	local x = math.clamp(c.X, half.X, math.max(half.X, s.X - half.X))
-	local y = math.clamp(c.Y, half.Y, math.max(half.Y, s.Y - half.Y))
-	return Vector2.new(x, y)
-end
-
-local function computeScale()
-	local s = screenSize()
-	local fit = math.min(1, (s.X - 24) / HUB_W, (s.Y - 24) / HUB_H)
-	return math.max(0.4, fit) * userScale
-end
-
--- Sidebar
-local Sidebar, TabsContainer, AvatarImg
-do
-	Sidebar = create("Frame", {
-		Size = UDim2.new(0, SIDEBAR_W, 1, 0), BackgroundColor3 = COLORS.Sidebar, BackgroundTransparency = 0.12,
-		BorderSizePixel = 0, Active = true, Parent = MainFrame,
-	})
-	-- "relâmpago" vertical na borda da sidebar
-	local bolt = create("Frame", {
-		AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromScale(1, 0), Size = UDim2.new(0, 2, 1, 0),
-		BackgroundColor3 = COLORS.Cyan, BorderSizePixel = 0, Parent = Sidebar,
-	})
-	local bg = create("UIGradient", {
-		Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, COLORS.AccentDark),
-			ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
-			ColorSequenceKeypoint.new(1, COLORS.AccentDark),
-		}),
-		Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.95), NumberSequenceKeypoint.new(0.5, 0.05), NumberSequenceKeypoint.new(1, 0.95),
-		}),
-		Rotation = 90, Offset = Vector2.new(0, -1), Parent = bolt,
-	})
-	pcall(function()
-		TweenService:Create(bg, TweenInfo.new(2.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-			{Offset = Vector2.new(0, 1)}):Play()
-	end)
-
-	local logo = create("Frame", {Size = UDim2.new(1, 0, 0, 56), BackgroundTransparency = 1, Parent = Sidebar})
-	create("ImageLabel", {
-		Size = UDim2.fromOffset(26, 26), Position = UDim2.new(0, 12, 0.5, -13),
-		BackgroundTransparency = 1, Image = ICONS.Logo, ImageColor3 = COLORS.Cyan, Parent = logo,
-	})
-	local title = label({Size = UDim2.new(1, -46, 0, 16), Position = UDim2.new(0, 44, 0.5, -15), Text = "DARK SHADOW",
-		Font = Enum.Font.GothamBlack, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd, Parent = logo})
-	create("UIGradient", {
-		Color = ColorSequence.new(COLORS.TextMain, COLORS.AccentGlow), Parent = title,
-	})
-	label({Size = UDim2.new(1, -46, 0, 12), Position = UDim2.new(0, 44, 0.5, 2), Text = "✦ COSMIC  v5.0",
-		TextSize = 10, TextColor3 = COLORS.AccentGlow, Parent = logo})
-
-	TabsContainer = create("ScrollingFrame", {
-		Size = UDim2.new(1, -16, 1, -128), Position = UDim2.new(0, 8, 0, 60),
-		BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 0,
-		AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
-		ScrollingDirection = Enum.ScrollingDirection.Y, Parent = Sidebar,
-	})
-	create("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 6), Parent = TabsContainer})
-
-	local profile = create("Frame", {
-		Size = UDim2.new(1, -16, 0, 48), Position = UDim2.new(0, 8, 1, -54), BackgroundTransparency = 1, Parent = Sidebar,
-	})
-	local avFrame = create("Frame", {
-		Size = UDim2.fromOffset(34, 34), Position = UDim2.new(0, 2, 0.5, -17), BackgroundTransparency = 1, Parent = profile,
-	})
-	AvatarImg = create("ImageLabel", {Size = UDim2.fromScale(1, 1), BackgroundColor3 = COLORS.Card, Parent = avFrame})
-	corner(AvatarImg, 17)
-	stroke(AvatarImg, COLORS.AccentGlow, 1.2, 0.3)
-	local dot = create("Frame", {
-		Size = UDim2.fromOffset(10, 10), Position = UDim2.new(1, -8, 1, -8),
-		BackgroundColor3 = COLORS.Green, BorderSizePixel = 0, ZIndex = 3, Parent = avFrame,
-	})
-	corner(dot, 5)
-	stroke(dot, COLORS.Sidebar, 1.5)
-	label({Size = UDim2.new(1, -44, 0, 16), Position = UDim2.new(0, 42, 0, 8), Text = LocalPlayer.DisplayName,
-		Font = Enum.Font.GothamBold, TextTruncate = Enum.TextTruncate.AtEnd, Parent = profile})
-	label({Size = UDim2.new(1, -44, 0, 14), Position = UDim2.new(0, 42, 0, 24), Text = "@" .. LocalPlayer.Name,
-		TextSize = 10, TextColor3 = COLORS.TextDark, TextTruncate = Enum.TextTruncate.AtEnd, Parent = profile})
-end
-
--- Header + área de páginas
-local TopHeader, HeaderIcon, HeaderTitle, MinimizeBtn, SearchBox, PagesContainer, NoResults
-do
-	local content = create("Frame", {
-		Size = UDim2.new(1, -SIDEBAR_W, 1, 0), Position = UDim2.new(0, SIDEBAR_W, 0, 0),
-		BackgroundTransparency = 1, Parent = MainFrame,
-	})
-	TopHeader = create("Frame", {
-		Size = UDim2.new(1, -20, 0, 52), Position = UDim2.new(0, 10, 0, 4),
-		BackgroundTransparency = 1, Active = true, Parent = content,
-	})
-	HeaderIcon = create("ImageLabel", {
-		Size = UDim2.fromOffset(20, 20), Position = UDim2.new(0, 4, 0.5, -10),
-		BackgroundTransparency = 1, ImageColor3 = COLORS.Cyan, Image = ICONS.Home, Parent = TopHeader,
-	})
-	HeaderTitle = label({
-		Size = UDim2.new(0, 110, 1, 0), Position = UDim2.new(0, 30, 0, 0), Text = "Home",
-		Font = Enum.Font.GothamBold, TextSize = 15, TextTruncate = Enum.TextTruncate.AtEnd, Parent = TopHeader,
-	})
-	MinimizeBtn = create("TextButton", {
-		Size = UDim2.fromOffset(30, 30), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0),
-		BackgroundColor3 = COLORS.Card, Text = "—", TextColor3 = COLORS.TextDark, TextSize = 13,
-		Font = Enum.Font.GothamBold, AutoButtonColor = false, Parent = TopHeader,
-	})
-	corner(MinimizeBtn, 8)
-	MinimizeBtn.MouseEnter:Connect(function() tween(MinimizeBtn, 0.15, {BackgroundColor3 = COLORS.Danger, TextColor3 = COLORS.TextMain}) end)
-	MinimizeBtn.MouseLeave:Connect(function() tween(MinimizeBtn, 0.15, {BackgroundColor3 = COLORS.Card, TextColor3 = COLORS.TextDark}) end)
-
-	local sf = create("Frame", {
-		Size = UDim2.fromOffset(IS_TOUCH and 130 or 170, 30), AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -38, 0.5, 0), BackgroundColor3 = COLORS.Card, Parent = TopHeader,
-	})
-	corner(sf, 8)
-	local ss = stroke(sf, COLORS.Stroke, 1)
-	create("ImageLabel", {
-		Size = UDim2.fromOffset(14, 14), Position = UDim2.new(0, 9, 0.5, -7),
-		BackgroundTransparency = 1, Image = ICONS.Search, ImageColor3 = COLORS.TextDark, Parent = sf,
-	})
-	SearchBox = create("TextBox", {
-		Size = UDim2.new(1, -32, 1, 0), Position = UDim2.new(0, 28, 0, 0), BackgroundTransparency = 1,
-		Text = "", PlaceholderText = "Search...", PlaceholderColor3 = COLORS.TextDark, TextColor3 = COLORS.TextMain,
-		TextSize = 11, Font = Enum.Font.GothamMedium, TextXAlignment = Enum.TextXAlignment.Left,
-		ClearTextOnFocus = false, Parent = sf,
-	})
-	SearchBox.Focused:Connect(function() tween(ss, 0.2, {Color = COLORS.AccentGlow}) end)
-	SearchBox.FocusLost:Connect(function() tween(ss, 0.2, {Color = COLORS.Stroke}) end)
-
-	-- Linha "relâmpago" com brilho que corre pelo cabeçalho
-	local accentLine = create("Frame", {
-		Size = UDim2.new(1, -20, 0, 2), Position = UDim2.new(0, 10, 0, 56),
-		BackgroundColor3 = COLORS.Accent, BorderSizePixel = 0, Parent = content,
-	})
-	local lg = create("UIGradient", {
-		Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, COLORS.AccentDark),
-			ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
-			ColorSequenceKeypoint.new(1, COLORS.AccentDark),
-		}),
-		Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.9),
-			NumberSequenceKeypoint.new(0.5, 0.05),
-			NumberSequenceKeypoint.new(1, 0.9),
-		}),
-		Offset = Vector2.new(-1, 0), Parent = accentLine,
-	})
-	pcall(function()
-		TweenService:Create(lg, TweenInfo.new(2.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-			{Offset = Vector2.new(1, 0)}):Play()
-	end)
-
-	PagesContainer = create("Frame", {
-		Size = UDim2.new(1, -20, 1, -68), Position = UDim2.new(0, 10, 0, 62), BackgroundTransparency = 1, Parent = content,
-	})
-	NoResults = label({
-		Size = UDim2.fromScale(1, 1), Text = "No results found", TextSize = 13, TextColor3 = COLORS.TextDark,
-		TextXAlignment = Enum.TextXAlignment.Center, Visible = false, ZIndex = 0, Parent = PagesContainer,
-	})
-end
-
--- ==========================================
--- 5. FRAMEWORK DE ABAS E SUB-ABAS
--- ==========================================
-local tabs = {}
-local groups = {}
-local ORDER = {Home = 10, Player = 20, Main = 30, Game = 40, Settings = 100}
-
-local function createScroll(parent)
-	local s = create("ScrollingFrame", {
-		Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0,
-		ScrollBarThickness = IS_TOUCH and 2 or 3, ScrollBarImageColor3 = COLORS.AccentGlow,
-		AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
-		ScrollingDirection = Enum.ScrollingDirection.Y, Parent = parent,
-	})
-	create("UIListLayout", {Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = s})
-	create("UIPadding", {PaddingBottom = UDim.new(0, 8), Parent = s})
-	return s
-end
-
-local function setActiveTab(name)
-	if not tabs[name] then return end
-	activeTab = name
-	for n, t in pairs(tabs) do
-		local on = (n == name)
-		t.Page.Visible = on
-		t.Line.Visible = on
-		t.Active = on
-		tween(t.Btn, 0.2, {BackgroundTransparency = on and 0.25 or 1})
-		tween(t.Icon, 0.2, {ImageColor3 = on and COLORS.Cyan or COLORS.TextDark})
-		tween(t.Label, 0.2, {TextColor3 = on and COLORS.TextMain or COLORS.TextDark})
-	end
-	HeaderTitle.Text = name
-	HeaderIcon.Image = tabs[name].IconId
-end
-
-local function createTab(name, iconId, useScroll, order)
-	local btn = create("TextButton", {
-		Size = UDim2.new(1, 0, 0, 38), BackgroundColor3 = COLORS.SubTabActive, BackgroundTransparency = 1,
-		Text = "", AutoButtonColor = false, LayoutOrder = order or nextOrder(TabsContainer), Parent = TabsContainer,
-	})
-	corner(btn, 8)
-	local line = create("Frame", {
-		Size = UDim2.fromOffset(3, 18), Position = UDim2.new(0, 0, 0.5, -9),
-		BackgroundColor3 = COLORS.Cyan, BorderSizePixel = 0, Visible = false, Parent = btn,
-	})
-	corner(line, 2)
-	local icon = create("ImageLabel", {
-		Size = UDim2.fromOffset(18, 18), Position = UDim2.new(0, 12, 0.5, -9),
-		BackgroundTransparency = 1, Image = iconId, ImageColor3 = COLORS.TextDark, Parent = btn,
-	})
-	local lbl = label({Size = UDim2.new(1, -40, 1, 0), Position = UDim2.new(0, 38, 0, 0), Text = name,
-		TextColor3 = COLORS.TextDark, TextTruncate = Enum.TextTruncate.AtEnd, Parent = btn})
-
-	local page = create("Frame", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false, Parent = PagesContainer})
-	local content = page
-	if useScroll then content = createScroll(page) end
-
-	tabs[name] = {Btn = btn, Page = page, Icon = icon, Line = line, Label = lbl, IconId = iconId, Active = false}
-	btn.MouseButton1Click:Connect(function()
-		if activeTab ~= name then Sfx.Play("Click") end
-		setActiveTab(name)
-	end)
-	btn.MouseEnter:Connect(function() if not tabs[name].Active then tween(btn, 0.15, {BackgroundTransparency = 0.8}) end end)
-	btn.MouseLeave:Connect(function() if not tabs[name].Active then tween(btn, 0.15, {BackgroundTransparency = 1}) end end)
-	return content
-end
-
--- Grupo de sub-abas com barra rolável (cabe no celular)
-local function createSubGroup(tabName, page)
-	local bar = create("ScrollingFrame", {
-		Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 0,
-		CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X,
-		ScrollingDirection = Enum.ScrollingDirection.X, Parent = page,
-	})
-	create("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder,
-		Padding = UDim.new(0, 8), Parent = bar})
-	local holder = create("Frame", {
-		Size = UDim2.new(1, 0, 1, -42), Position = UDim2.new(0, 0, 0, 42), BackgroundTransparency = 1, Parent = page,
-	})
-	local group = {Subs = {}, Active = nil}
-
-	function group.Set(name)
-		if not group.Subs[name] then return end
-		group.Active = name
-		for n, s in pairs(group.Subs) do
-			local on = (n == name)
-			s.Page.Visible = on
-			tween(s.Btn, 0.2, {BackgroundColor3 = on and COLORS.SubTabActive or COLORS.SubTabBg})
-			tween(s.Icon, 0.2, {ImageColor3 = on and COLORS.Cyan or COLORS.TextDark})
-			tween(s.Label, 0.2, {TextColor3 = on and COLORS.TextMain or COLORS.TextDark})
-		end
-	end
-
-	function group.Add(name, iconId)
-		local btn = create("TextButton", {
-			Size = UDim2.fromOffset(96, 34), BackgroundColor3 = COLORS.SubTabBg, Text = "",
-			AutoButtonColor = false, LayoutOrder = nextOrder(bar), Parent = bar,
-		})
-		corner(btn, 8)
-		stroke(btn, COLORS.Stroke, 1, 0.3)
-		local icon = create("ImageLabel", {
-			Size = UDim2.fromOffset(14, 14), Position = UDim2.new(0, 10, 0.5, -7),
-			BackgroundTransparency = 1, Image = iconId, ImageColor3 = COLORS.TextDark, Parent = btn,
-		})
-		local lbl = label({Size = UDim2.new(1, -30, 1, 0), Position = UDim2.new(0, 30, 0, 0), Text = name,
-			TextSize = 11, TextColor3 = COLORS.TextDark, TextTruncate = Enum.TextTruncate.AtEnd, Parent = btn})
-		local pg = create("Frame", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false, Parent = holder})
-		local scroll = createScroll(pg)
-		group.Subs[name] = {Btn = btn, Page = pg, Icon = icon, Label = lbl}
-		btn.MouseButton1Click:Connect(function()
-			if group.Active ~= name then Sfx.Play("Click") end
-			group.Set(name)
-		end)
-		if not group.Active then group.Set(name) end
-		return scroll
-	end
-
-	groups[tabName] = group
-	return group
-end
-
--- ==========================================
--- 6. NOTIFICAÇÕES
--- ==========================================
-local Notify
-do
-	local holder = create("Frame", {
-		Name = "Notifications", Size = UDim2.new(0, IS_TOUCH and 200 or 250, 1, -20),
-		Position = UDim2.new(1, IS_TOUCH and -212 or -262, 0, 10), BackgroundTransparency = 1, ZIndex = 50, Parent = ScreenGui,
-	})
-	create("UIListLayout", {
-		VerticalAlignment = Enum.VerticalAlignment.Bottom, SortOrder = Enum.SortOrder.LayoutOrder,
-		Padding = UDim.new(0, 8), Parent = holder,
-	})
-	local active = 0
-	-- noSound = true quando outro som (ex.: toggle) já tocou
-	Notify = function(title, text, duration, noSound)
-		if not notificationsEnabled or active >= 3 then return end
-		active = active + 1
-		duration = duration or 2.5
-		if not noSound then Sfx.Play("Notify", 0.15) end
-		local wrapper = create("Frame", {
-			Size = UDim2.new(1, 0, 0, 50), BackgroundTransparency = 1, ZIndex = 50,
-			LayoutOrder = nextOrder(holder), Parent = holder,
-		})
-		local card = create("CanvasGroup", {
-			Size = UDim2.fromScale(1, 1), Position = UDim2.new(1.2, 0, 0, 0),
-			BackgroundColor3 = COLORS.Card, BorderSizePixel = 0, Parent = wrapper,
-		})
-		corner(card, 10)
-		stroke(card, COLORS.AccentGlow, 1, 0.4)
-		local bar = create("Frame", {Size = UDim2.new(0, 3, 1, -16), Position = UDim2.new(0, 8, 0, 8),
-			BackgroundColor3 = COLORS.Cyan, BorderSizePixel = 0, Parent = card})
-		corner(bar, 2)
-		label({Size = UDim2.new(1, -28, 0, 16), Position = UDim2.new(0, 20, 0, 8), Text = title,
-			Font = Enum.Font.GothamBold, TextSize = 12, TextTruncate = Enum.TextTruncate.AtEnd, Parent = card})
-		label({Size = UDim2.new(1, -28, 0, 14), Position = UDim2.new(0, 20, 0, 26), Text = text,
-			TextSize = 10, TextColor3 = COLORS.TextDark, TextTruncate = Enum.TextTruncate.AtEnd, Parent = card})
-		tween(card, 0.35, {Position = UDim2.new(0, 0, 0, 0)}, Enum.EasingStyle.Back)
-		task.delay(duration, function()
-			if card.Parent then
-				tween(card, 0.3, {GroupTransparency = 1, Position = UDim2.new(0.3, 0, 0, 0)})
-				task.wait(0.32)
-			end
-			active = math.max(0, active - 1)
-			if wrapper.Parent then wrapper:Destroy() end
-		end)
-	end
-end
-
--- ==========================================
--- 7. COMPONENTES (+ registro para a busca)
--- ==========================================
-local sections = {}
-
-local function safeCall(fn, ...)
-	local ok, err = pcall(fn, ...)
-	if not ok then warn("[ShadowHub] " .. tostring(err)) end
-end
-
-local function AddSection(parent, title, tab, sub)
-	local frame = create("Frame", {
-		Size = UDim2.new(1, -8, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundColor3 = COLORS.Card, BackgroundTransparency = 0.08, BorderSizePixel = 0,
-		LayoutOrder = nextOrder(parent), Parent = parent,
-	})
-	corner(frame, 12)
-	stroke(frame, COLORS.Stroke, 1)
-	create("UIGradient", {
-		Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(170, 200, 255)),
-		Rotation = 90, Parent = frame,
-	})
-	create("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2), Parent = frame})
-	create("UIPadding", {PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 10), Parent = frame})
-	local header = label({Size = UDim2.new(1, 0, 0, 20), Text = "✦  " .. string.upper(title), TextSize = 10,
-		Font = Enum.Font.GothamBold, TextColor3 = COLORS.AccentGlow, LayoutOrder = nextOrder(frame), Parent = frame})
-	create("UIPadding", {PaddingLeft = UDim.new(0, 14), Parent = header})
-	local sec = {Frame = frame, Tab = tab, Sub = sub, Rows = {}}
-	if tab then table.insert(sections, sec) end
-	return sec
-end
-
-local function registerRow(sec, row, title)
-	table.insert(sec.Rows, {Frame = row, Title = string.lower(title)})
-end
-
--- quiet = true: sem som e sem pop-up ao ligar/desligar
-local function AddToggle(sec, title, desc, default, callback, quiet)
-	local h = desc and 46 or 36
-	local row = create("Frame", {Size = UDim2.new(1, 0, 0, h), BackgroundTransparency = 1,
-		LayoutOrder = nextOrder(sec.Frame), Parent = sec.Frame})
-	local rowBtn = create("TextButton", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "",
-		AutoButtonColor = false, Parent = row})
-	label({Size = UDim2.new(1, -84, 0, desc and 20 or h), Position = UDim2.new(0, 14, 0, desc and 4 or 0),
-		Text = title, TextTruncate = Enum.TextTruncate.AtEnd, Parent = row})
-	if desc then
-		label({Size = UDim2.new(1, -84, 0, 16), Position = UDim2.new(0, 14, 0, 24), Text = desc,
-			TextSize = 10, TextColor3 = COLORS.TextDark, TextTruncate = Enum.TextTruncate.AtEnd, Parent = row})
-	end
-	local switch = create("Frame", {
-		Size = UDim2.fromOffset(42, 22), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0),
-		BackgroundColor3 = default and COLORS.Accent or COLORS.SwitchOff, Parent = row,
-	})
-	corner(switch, 11)
-	local sstroke = stroke(switch, COLORS.AccentGlow, 1, default and 0.3 or 1)
-	local knob = create("Frame", {
-		Size = UDim2.fromOffset(16, 16),
-		Position = default and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8),
-		BackgroundColor3 = Color3.new(1, 1, 1), Parent = switch,
-	})
-	corner(knob, 8)
-
-	local state = default and true or false
-	local control = {}
-	function control.Set(newState, silent)
-		state = newState and true or false
-		tween(knob, 0.2, {Position = state and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8)})
-		tween(switch, 0.2, {BackgroundColor3 = state and COLORS.Accent or COLORS.SwitchOff})
-		tween(sstroke, 0.2, {Transparency = state and 0.3 or 1})
-		if not silent then
-			if not quiet then Sfx.Play(state and "On" or "Off") end
-			safeCall(callback, state)
-			if not quiet then Notify(title, state and "Enabled" or "Disabled", 1.5, true) end
-		end
-	end
-	function control.Get() return state end
-	rowBtn.MouseButton1Click:Connect(function() control.Set(not state) end)
-
-	registerRow(sec, row, title)
-	return control
-end
-
-local function AddSlider(sec, title, minVal, maxVal, default, step, unit, callback)
-	local decimals = step >= 1 and 0 or (step >= 0.1 and 1 or 2)
-	local function fmt(v) return string.format("%." .. decimals .. "f", v) .. unit end
-	local rowH = IS_TOUCH and 60 or 54
-
-	local row = create("Frame", {Size = UDim2.new(1, 0, 0, rowH), BackgroundTransparency = 1,
-		LayoutOrder = nextOrder(sec.Frame), Parent = sec.Frame})
-	label({Size = UDim2.new(1, -90, 0, 20), Position = UDim2.new(0, 14, 0, 4), Text = title,
-		TextTruncate = Enum.TextTruncate.AtEnd, Parent = row})
-	local valBox = create("Frame", {Size = UDim2.fromOffset(56, 20), AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -14, 0, 4), BackgroundColor3 = COLORS.CardHeader, Parent = row})
-	corner(valBox, 6)
-	local valLabel = label({Size = UDim2.fromScale(1, 1), Text = fmt(default), TextSize = 10,
-		Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Center, Parent = valBox})
-
-	local hit = create("Frame", {Size = UDim2.new(1, -28, 0, IS_TOUCH and 30 or 24), Position = UDim2.new(0, 14, 0, 26),
-		BackgroundTransparency = 1, Active = true, Parent = row})
-	local trackBar = create("Frame", {Size = UDim2.new(1, 0, 0, 4), AnchorPoint = Vector2.new(0, 0.5),
-		Position = UDim2.new(0, 0, 0.5, 0), BackgroundColor3 = COLORS.SwitchOff, BorderSizePixel = 0, Parent = hit})
-	corner(trackBar, 2)
-	local fill = create("Frame", {Size = UDim2.fromScale((default - minVal) / (maxVal - minVal), 1),
-		BackgroundColor3 = COLORS.Accent, BorderSizePixel = 0, Parent = trackBar})
-	corner(fill, 2)
-	create("UIGradient", {Color = ColorSequence.new(COLORS.AccentDark, COLORS.Cyan), Parent = fill})
-	local thumb = create("Frame", {Size = UDim2.fromOffset(12, 12), AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(1, 0.5), BackgroundColor3 = COLORS.TextMain, Parent = fill})
-	corner(thumb, 6)
-	stroke(thumb, COLORS.AccentGlow, 1.5, 0.2)
-
-	local last = default
-	local control = {}
-	function control.Set(v, fire)
-		v = math.clamp(v, minVal, maxVal)
-		v = minVal + math.floor((v - minVal) / step + 0.5) * step
-		v = math.clamp(math.floor(v * 1000 + 0.5) / 1000, minVal, maxVal)
-		fill.Size = UDim2.fromScale((v - minVal) / (maxVal - minVal), 1)
-		valLabel.Text = fmt(v)
-		if fire and v ~= last then
-			last = v
-			Sfx.Play("Slide", 0.07)
-			safeCall(callback, v)
-		end
-		last = v
-	end
-
-	local dragging, dragInput = false, nil
-	local function updateFromX(x)
-		local w = hit.AbsoluteSize.X
-		if w <= 0 then return end
-		local pos = math.clamp((x - hit.AbsolutePosition.X) / w, 0, 1)
-		control.Set(minVal + (maxVal - minVal) * pos, true)
-	end
-
-	hit.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			dragging, dragInput = true, input
-			local scroller = row:FindFirstAncestorWhichIsA("ScrollingFrame")
-			if scroller then scroller.ScrollingEnabled = false end
-			tween(thumb, 0.15, {Size = UDim2.fromOffset(16, 16)})
-			updateFromX(input.Position.X)
-		end
-	end)
-	track(UserInputService.InputChanged:Connect(function(input)
-		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input == dragInput) then
-			updateFromX(input.Position.X)
-		end
-	end))
-	track(UserInputService.InputEnded:Connect(function(input)
-		if dragging and (input == dragInput or input.UserInputType == Enum.UserInputType.MouseButton1) then
-			dragging = false
-			local scroller = row:FindFirstAncestorWhichIsA("ScrollingFrame")
-			if scroller then scroller.ScrollingEnabled = true end
-			tween(thumb, 0.15, {Size = UDim2.fromOffset(12, 12)})
-		end
-	end))
-
-	registerRow(sec, row, title)
-	return control
-end
-
-local function AddButton(sec, title, callback, danger)
-	local row = create("Frame", {Size = UDim2.new(1, 0, 0, IS_TOUCH and 44 or 40), BackgroundTransparency = 1,
-		LayoutOrder = nextOrder(sec.Frame), Parent = sec.Frame})
-	local base = danger and COLORS.Danger or COLORS.CardHeader
-	local over = danger and Color3.fromRGB(225, 80, 110) or COLORS.CardHover
-	local btn = create("TextButton", {
-		Size = UDim2.new(1, -28, 0, 34), Position = UDim2.new(0, 14, 0.5, -17), BackgroundColor3 = base,
-		Text = title, TextColor3 = COLORS.TextMain, TextSize = 12, Font = Enum.Font.GothamBold,
-		AutoButtonColor = false, Parent = row,
-	})
-	corner(btn, 8)
-	stroke(btn, danger and COLORS.Danger or COLORS.AccentDark, 1, danger and 0 or 0.35)
-	btn.MouseEnter:Connect(function() tween(btn, 0.15, {BackgroundColor3 = over}) end)
-	btn.MouseLeave:Connect(function() tween(btn, 0.15, {BackgroundColor3 = base}) end)
-	btn.MouseButton1Down:Connect(function() tween(btn, 0.08, {Size = UDim2.new(1, -34, 0, 32)}) end)
-	btn.MouseButton1Up:Connect(function() tween(btn, 0.12, {Size = UDim2.new(1, -28, 0, 34)}) end)
-	btn.MouseButton1Click:Connect(function()
-		Sfx.Play(danger and "Error" or "Click")
-		safeCall(callback)
-	end)
-	registerRow(sec, row, title)
-	return btn
-end
-
-local function AddInput(sec, title, placeholder, default, callback)
-	local row = create("Frame", {Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1,
-		LayoutOrder = nextOrder(sec.Frame), Parent = sec.Frame})
-	label({Size = UDim2.new(1, -190, 1, 0), Position = UDim2.new(0, 14, 0, 0), Text = title,
-		TextTruncate = Enum.TextTruncate.AtEnd, Parent = row})
-	local boxFrame = create("Frame", {
-		Size = UDim2.fromOffset(160, 28), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0),
-		BackgroundColor3 = COLORS.CardHeader, Parent = row,
-	})
-	corner(boxFrame, 6)
-	local bs = stroke(boxFrame, COLORS.Stroke, 1)
-	local box = create("TextBox", {
-		Size = UDim2.new(1, -12, 1, 0), Position = UDim2.new(0, 6, 0, 0), BackgroundTransparency = 1,
-		Text = default or "", PlaceholderText = placeholder or "", PlaceholderColor3 = COLORS.TextDark,
-		TextColor3 = COLORS.TextMain, TextSize = 11, Font = Enum.Font.GothamMedium,
-		TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, ClipsDescendants = true, Parent = boxFrame,
-	})
-	box.Focused:Connect(function() tween(bs, 0.2, {Color = COLORS.AccentGlow}) end)
-	box.FocusLost:Connect(function()
-		tween(bs, 0.2, {Color = COLORS.Stroke})
-		Sfx.Play("Click")
-		safeCall(callback, box.Text)
-	end)
-	registerRow(sec, row, title)
-	return box
-end
-
-local function AddInfo(sec, title, value)
-	local row = create("Frame", {Size = UDim2.new(1, 0, 0, 26), BackgroundTransparency = 1,
-		LayoutOrder = nextOrder(sec.Frame), Parent = sec.Frame})
-	label({Size = UDim2.new(0.4, 0, 1, 0), Position = UDim2.new(0, 14, 0, 0), Text = title,
-		TextSize = 11, TextColor3 = COLORS.TextDark, TextTruncate = Enum.TextTruncate.AtEnd, Parent = row})
-	local val = label({Size = UDim2.new(0.6, -28, 1, 0), Position = UDim2.new(0.4, 0, 0, 0), Text = tostring(value),
-		TextSize = 11, Font = Enum.Font.GothamBold, TextColor3 = COLORS.Star, TextXAlignment = Enum.TextXAlignment.Right,
-		TextTruncate = Enum.TextTruncate.AtEnd, Parent = row})
-	registerRow(sec, row, title)
-	return val
-end
-
-local function AddText(sec, text)
-	local l = label({Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Text = text,
-		TextSize = 11, TextColor3 = COLORS.TextDark, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top,
-		LayoutOrder = nextOrder(sec.Frame), Parent = sec.Frame})
-	create("UIPadding", {PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 14), Parent = l})
-	return l
-end
-
--- ==========================================
--- 8. BUSCA (debounce + navegação até o resultado)
--- ==========================================
-do
-	local token = 0
-	local function applySearch()
-		local q = (string.lower(SearchBox.Text):gsub("^%s*(.-)%s*$", "%1"))
-		local firstSec, currentHas, anyMatch = nil, false, false
-		for _, sec in ipairs(sections) do
-			local any = false
-			for _, r in ipairs(sec.Rows) do
-				local match = (q == "") or (string.find(r.Title, q, 1, true) ~= nil)
-				if r.Frame.Visible ~= match then r.Frame.Visible = match end
-				if match then any = true end
-			end
-			local vis = (q == "") or any
-			if sec.Frame.Visible ~= vis then sec.Frame.Visible = vis end
-			if q ~= "" and any then
-				anyMatch = true
-				firstSec = firstSec or sec
-				if sec.Tab == activeTab then
-					local g = groups[sec.Tab]
-					if sec.Sub == nil or (g and g.Active == sec.Sub) then currentHas = true end
-				end
-			end
-		end
-		NoResults.Visible = (q ~= "" and not anyMatch)
-		if q ~= "" and firstSec and not currentHas then
-			setActiveTab(firstSec.Tab)
-			if firstSec.Sub and groups[firstSec.Tab] then groups[firstSec.Tab].Set(firstSec.Sub) end
-		end
-	end
-	SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
-		token = token + 1
-		local my = token
-		task.delay(0.12, function()
-			if my == token then applySearch() end
-		end)
-	end)
-end
-
--- ==========================================
--- 9. NÚCLEO: MOVIMENTO, VISUAIS, PERFORMANCE, ESP, HOOK
--- ==========================================
-
--- ---------- 9.1 Movimento ----------
-function Mv.restoreSpeed()
-	local hum = getHum()
-	if hum and Original.Speed then hum.WalkSpeed = Original.Speed end
-	Original.Speed = nil
-end
-
-function Mv.restoreJump()
-	local hum = getHum()
-	if hum and Original.Jump then
-		if Original.JumpIsPower then hum.JumpPower = Original.Jump else hum.JumpHeight = Original.Jump end
-	end
-	Original.Jump = nil
-end
-
-function Mv.rebuildNoclip()
-	table.clear(Mv.parts)
-	local c = LocalPlayer.Character
-	if not c then return end
-	for _, p in ipairs(c:GetDescendants()) do
-		if p:IsA("BasePart") then Mv.parts[#Mv.parts + 1] = p end
-	end
-end
-
-function Mv.restoreNoclip()
-	for part in pairs(Mv.touched) do
-		if part.Parent then part.CanCollide = true end
-	end
-	Mv.touched = {}
-	table.clear(Mv.parts)
-end
-
-function Mv.stopFly()
-	if Mv.fly then
-		for _, o in pairs(Mv.fly) do if o then o:Destroy() end end
-		Mv.fly = nil
-	end
-	Mv.vel = Vector3.zero
-	local hum = getHum()
-	if hum then
-		hum.PlatformStand = false
-		pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-	end
-end
-
-function Mv.startFly()
-	local root, hum = getRoot(), getHum()
-	if not root or not hum then return end
-	Mv.stopFly()
-	local bv = Instance.new("BodyVelocity")
-	bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-	bv.Velocity = Vector3.zero
-	bv.Parent = root
-	local bg = Instance.new("BodyGyro")
-	bg.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
-	bg.P = 9e4
-	bg.CFrame = root.CFrame
-	bg.Parent = root
-	hum.PlatformStand = true
-	Mv.fly = {bv = bv, bg = bg}
-end
-
-function Mv.moveVector()
-	if Mv.controls then
-		local ok, v = pcall(function() return Mv.controls:GetMoveVector() end)
-		if ok and v then return v end
-	end
-	local hum = getHum()
-	local cam = workspace.CurrentCamera
-	if hum and cam then
-		local md = cam.CFrame:VectorToObjectSpace(hum.MoveDirection)
-		return Vector3.new(md.X, 0, md.Z)
-	end
-	return Vector3.zero
-end
-
--- ---------- 9.2 Visuais ----------
-local Vis = {}
-function Vis.restoreFullbright()
-	if Vis.fb then
-		for k, v in pairs(Vis.fb) do pcall(function() Lighting[k] = v end) end
-		Vis.fb = nil
-	end
-end
-function Vis.restoreFog()
-	if Vis.fog then
-		pcall(function() Lighting.FogEnd = Vis.fog.FogEnd; Lighting.FogStart = Vis.fog.FogStart end)
-		for atm, d in pairs(Vis.fog.Atmos) do if atm.Parent then atm.Density = d end end
-		Vis.fog = nil
-	end
-end
-
--- ---------- 9.3 Performance: Anti-Lag, FPS Boost, Guard ----------
-local alSet = setmetatable({}, {__mode = "k"})
-local alPost = {}
-local alConn
-local ultraStore = setmetatable({}, {__mode = "k"})
-local ultraConn
-
-local function killEffect(d)
-	if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") or d:IsA("Fire") or d:IsA("Smoke") or d:IsA("Sparkles") then
-		if d.Enabled and not alSet[d] then
-			alSet[d] = true
-			d.Enabled = false
-		end
-	end
-end
-
--- Remove efeitos pesados (partículas, rastros, blur, bloom...) NO SEU CLIENTE
-local function setAntiLag(on)
-	if on == Perf.alOn then return end
-	Perf.alOn = on
-	if on then
-		task.spawn(function()
-			local i = 0
-			for _, d in ipairs(workspace:GetDescendants()) do
-				if not Perf.alOn then break end
-				killEffect(d)
-				i = i + 1
-				if i % 500 == 0 then task.wait() end
-			end
-		end)
-		alConn = workspace.DescendantAdded:Connect(function(d) if Perf.alOn then killEffect(d) end end)
-		for _, c in ipairs(Lighting:GetChildren()) do
-			if c:IsA("BlurEffect") or c:IsA("BloomEffect") or c:IsA("SunRaysEffect") or c:IsA("DepthOfFieldEffect") then
-				if c.Enabled then alPost[c] = true; c.Enabled = false end
-			end
-		end
-	else
-		if alConn then alConn:Disconnect(); alConn = nil end
-		for d in pairs(alSet) do if d.Parent then d.Enabled = true end end
-		alSet = setmetatable({}, {__mode = "k"})
-		for c in pairs(alPost) do if c.Parent then c.Enabled = true end end
-		alPost = {}
-	end
-end
-
-local function ultraApply(d)
-	if d:IsA("Terrain") then return end
-	if d:IsA("BasePart") then
-		if not ultraStore[d] then ultraStore[d] = {d.Material, d.Reflectance} end
-		d.Material = Enum.Material.SmoothPlastic
-		d.Reflectance = 0
-	elseif d:IsA("Decal") or d:IsA("Texture") then
-		if not ultraStore[d] then ultraStore[d] = {d.Transparency} end
-		d.Transparency = 1
-	end
-end
-
--- Ultra Boost: tira texturas/materiais (mais FPS, visual simples)
-local function setUltra(on)
-	if on == Perf.ultraOn then return end
-	Perf.ultraOn = on
-	if on then
-		task.spawn(function()
-			local i = 0
-			for _, d in ipairs(workspace:GetDescendants()) do
-				if not Perf.ultraOn then break end
-				pcall(ultraApply, d)
-				i = i + 1
-				if i % 400 == 0 then task.wait() end
-			end
-		end)
-		ultraConn = workspace.DescendantAdded:Connect(function(d) if Perf.ultraOn then pcall(ultraApply, d) end end)
-	else
-		if ultraConn then ultraConn:Disconnect(); ultraConn = nil end
-		for d, v in pairs(ultraStore) do
-			if d.Parent then
-				pcall(function()
-					if d:IsA("BasePart") then d.Material = v[1]; d.Reflectance = v[2]
-					else d.Transparency = v[1] end
-				end)
-			end
-		end
-		ultraStore = setmetatable({}, {__mode = "k"})
-	end
-end
-
--- FPS Boost: qualidade mínima, sem sombras e sem decoração de terreno
-local function setLowGfx(on)
-	State.LowGfx = on
-	if on then
-		if not Perf.gfx then
-			Perf.gfx = {}
-			pcall(function() Perf.gfx.Quality = settings().Rendering.QualityLevel end)
-			pcall(function() Perf.gfx.Shadows = Lighting.GlobalShadows end)
-			pcall(function() Perf.gfx.Decoration = workspace.Terrain.Decoration end)
-			pcall(function() Perf.gfx.Wave = workspace.Terrain.WaterWaveSize end)
-		end
-		pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
-		pcall(function() Lighting.GlobalShadows = false end)
-		pcall(function() workspace.Terrain.Decoration = false end)
-		pcall(function() workspace.Terrain.WaterWaveSize = 0 end)
-	elseif Perf.gfx then
-		local g = Perf.gfx
-		if g.Quality then pcall(function() settings().Rendering.QualityLevel = g.Quality end) end
-		if g.Shadows ~= nil then pcall(function() Lighting.GlobalShadows = g.Shadows end) end
-		if g.Decoration ~= nil then pcall(function() workspace.Terrain.Decoration = g.Decoration end) end
-		if g.Wave ~= nil then pcall(function() workspace.Terrain.WaterWaveSize = g.Wave end) end
-		Perf.gfx = nil
-	end
-end
-
--- Modo Lite: o próprio hub reduz seu custo (estrelas off, ESP e loops mais lentos)
-local function setLite(on)
-	if Perf.Lite == on then return end
-	Perf.Lite = on
-	StarContainer.Visible = State.Stars and not on
-end
-
--- Verificado 1x por segundo com o FPS medido
-local function guardTick(fps)
-	Perf.Fps = fps
-	if not Perf.Guard or fps < 5 then
-		Perf.lowSec, Perf.critSec, Perf.goodSec = 0, 0, 0
-		Perf.Status = Perf.Guard and "Paused" or "Off"
-		return
-	end
-	if fps < Perf.LowFps then Perf.lowSec = Perf.lowSec + 1 else Perf.lowSec = 0 end
-	if fps < Perf.CritFps then Perf.critSec = Perf.critSec + 1 else Perf.critSec = 0 end
-	if fps >= Perf.LowFps + 12 then Perf.goodSec = Perf.goodSec + 1 else Perf.goodSec = 0 end
-
-	if Perf.lowSec >= 3 and not Perf.Lite then
-		setLite(true)
-		if not Perf.alOn then
-			setAntiLag(true)
-			Perf.autoAL = true
-			if PerfUI.al then PerfUI.al.Set(true, true) end
-		end
-		Notify("Performance Guard", "FPS low: Anti-Lag enabled", 3)
-	end
-	if Perf.critSec >= 3 and not State.LowGfx then
-		setLowGfx(true)
-		Perf.autoFB = true
-		if PerfUI.gfx then PerfUI.gfx.Set(true, true) end
-		Notify("Performance Guard", "FPS critical: FPS Boost enabled", 3)
-	end
-	if Perf.AutoRestore and Perf.goodSec >= 30 and Perf.flaps < 2 and (Perf.autoAL or Perf.autoFB or Perf.Lite) then
-		if Perf.autoFB then
-			setLowGfx(false)
-			Perf.autoFB = false
-			if PerfUI.gfx then PerfUI.gfx.Set(false, true) end
-		end
-		if Perf.autoAL then
-			setAntiLag(false)
-			Perf.autoAL = false
-			if PerfUI.al then PerfUI.al.Set(false, true) end
-		end
-		setLite(false)
-		Perf.flaps = Perf.flaps + 1
-		Perf.goodSec = 0
-		Notify("Performance Guard", "FPS recovered: settings restored", 3)
-	end
-	Perf.Status = Perf.Lite and "Boosting" or "Monitoring"
-end
-
--- ---------- 9.4 Utilitários ----------
-local afkConn, rejoinConn
-
-local function setAntiAfk(on)
-	State.AntiAfk = on
-	if on then
-		if not afkConn then
-			afkConn = LocalPlayer.Idled:Connect(function()
-				pcall(function()
-					local vu = game:GetService("VirtualUser")
-					vu:CaptureController()
-					vu:ClickButton2(Vector2.new())
-				end)
-			end)
-		end
-	elseif afkConn then
-		afkConn:Disconnect()
-		afkConn = nil
-	end
-end
-
-local function setNoRender(on)
-	State.NoRender = on
-	pcall(function() RunService:Set3dRenderingEnabled(not on) end)
-end
-
-local function setAutoRejoin(on)
-	State.AutoRejoin = on
-	if on then
-		if not rejoinConn then
-			local busy = false
-			rejoinConn = GuiService.ErrorMessageChanged:Connect(function(msg)
-				if State.AutoRejoin and not busy and msg and msg ~= "" then
-					busy = true
-					task.wait(3)
-					pcall(function() TeleportService:Teleport(game.PlaceId, LocalPlayer) end)
-					task.delay(10, function() busy = false end)
-				end
-			end)
-		end
-	elseif rejoinConn then
-		rejoinConn:Disconnect()
-		rejoinConn = nil
-	end
-end
-
--- Hook de remotes (usado só pelo aprendizado do merge; inerte fora disso)
-local function installHook()
-	if env.__ShadowHookInstalled then return true end
-	if not (hookmetamethod and getnamecallmethod) then return false end
-	local wrap = newcclosure or function(f) return f end
-	local old
-	local ok = pcall(function()
-		old = hookmetamethod(game, "__namecall", wrap(function(self, ...)
-			local m = getnamecallmethod()
-			local h = env.__ShadowHookFn
-			if h and (m == "FireServer" or m == "InvokeServer") and (not checkcaller or not checkcaller()) then
-				pcall(h, self, m, ...)
-				if setnamecallmethod then setnamecallmethod(m) end
-			end
-			return old(self, ...)
-		end))
-	end)
-	if ok then env.__ShadowHookInstalled = true end
-	return ok
-end
-
--- ---------- 9.5 ESP (motor genérico com provedores) ----------
-local ESPFolder = create("Folder", {Name = "ShadowESP", Parent = ParentGui})
-local ESP = {Providers = {}, Enabled = {}, Entries = {}, MaxDist = 800, Limit = 40}
-
-function ESP.Register(name, fn)
-	ESP.Providers[name] = fn
-	ESP.Enabled[name] = false
-	ESP.Entries[name] = {}
-end
-
-function ESP.Clear(name)
-	for _, e in pairs(ESP.Entries[name] or {}) do
-		if e.gui then e.gui:Destroy() end
-		if e.hl then e.hl:Destroy() end
-	end
-	ESP.Entries[name] = {}
-end
-
-function ESP.SetEnabled(name, on)
-	ESP.Enabled[name] = on and true or false
-	if not on then ESP.Clear(name) end
-end
-
-function ESP.Tick()
-	local cam = workspace.CurrentCamera
-	if not cam then return end
-	local camPos = cam.CFrame.Position
-	local hlUsed = 0
-	for name, fn in pairs(ESP.Providers) do
-		if ESP.Enabled[name] then
-			local ok, items = pcall(fn)
-			local entries = ESP.Entries[name]
-			local mark = {}
-			if ok and items then
-				for i = 1, math.min(#items, ESP.Limit) do
-					local it = items[i]
-					local part = it.part
-					if part and part.Parent then
-						local dist = (part.Position - camPos).Magnitude
-						if dist <= ESP.MaxDist then
-							local e = entries[part]
-							if not e then
-								local gui = create("BillboardGui", {
-									Size = UDim2.fromOffset(130, 34), StudsOffset = Vector3.new(0, 3, 0), AlwaysOnTop = true,
-									LightInfluence = 0, MaxDistance = ESP.MaxDist + 50, Adornee = part, Parent = ESPFolder,
-								})
-								local lbl = create("TextLabel", {
-									Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Font = Enum.Font.GothamBold,
-									TextSize = 12, TextColor3 = it.color, TextStrokeTransparency = 0.3,
-									TextStrokeColor3 = Color3.new(0, 0, 0), Text = "", Parent = gui,
-								})
-								e = {gui = gui, lbl = lbl}
-								entries[part] = e
-							end
-							mark[part] = true
-							local txt = it.text .. "\n" .. math.floor(dist) .. "m"
-							if e.txt ~= txt then e.txt = txt; e.lbl.Text = txt end
-							if e.col ~= it.color then e.col = it.color; e.lbl.TextColor3 = it.color end
-							if it.hl and it.hl.Parent and hlUsed < 28 then
-								hlUsed = hlUsed + 1
-								if not e.hl then
-									e.hl = create("Highlight", {
-										Adornee = it.hl, FillColor = it.color, OutlineColor = Color3.new(1, 1, 1),
-										FillTransparency = 0.55, OutlineTransparency = 0,
-										DepthMode = Enum.HighlightDepthMode.AlwaysOnTop, Parent = ESPFolder,
-									})
-								else
-									if e.hl.Adornee ~= it.hl then e.hl.Adornee = it.hl end
-									if e.hl.FillColor ~= it.color then e.hl.FillColor = it.color end
-								end
-							elseif e.hl then
-								e.hl:Destroy()
-								e.hl = nil
-							end
-						end
-					end
-				end
-			end
-			for part, e in pairs(entries) do
-				if not mark[part] then
-					if e.gui then e.gui:Destroy() end
-					if e.hl then e.hl:Destroy() end
-					entries[part] = nil
-				end
-			end
-		end
-	end
-end
-
-ESP.Register("Players", function()
-	local out = {}
-	for _, pl in ipairs(Players:GetPlayers()) do
-		if pl ~= LocalPlayer then
-			local ch = pl.Character
-			local root = ch and ch:FindFirstChild("HumanoidRootPart")
-			if root then
-				out[#out + 1] = {part = root, hl = ch, text = pl.DisplayName,
-					color = (pl.Team and pl.TeamColor.Color) or COLORS.AccentGlow}
-			end
-		end
-	end
-	return out
-end)
-
--- ==========================================
--- 10. ABAS PRINCIPAIS (universais: aparecem em qualquer jogo)
--- ==========================================
-
--- ---------- 10.1 HOME ----------
-do
-	local HomeScroll = createTab("Home", ICONS.Home, true, ORDER.Home)
-
-	local card = create("Frame", {
-		Size = UDim2.new(1, -8, 0, 72), BackgroundColor3 = COLORS.Card, BackgroundTransparency = 0.08, BorderSizePixel = 0,
-		LayoutOrder = nextOrder(HomeScroll), Parent = HomeScroll,
-	})
-	corner(card, 12)
-	stroke(card, COLORS.AccentDark, 1, 0.2)
-	create("UIGradient", {
-		Color = ColorSequence.new(Color3.fromRGB(150, 190, 255), Color3.fromRGB(255, 255, 255)), Parent = card,
-	})
-	Refs.homeAvatar = create("ImageLabel", {
-		Size = UDim2.fromOffset(48, 48), Position = UDim2.new(0, 14, 0.5, -24),
-		BackgroundColor3 = COLORS.CardHeader, Image = "", Parent = card,
-	})
-	corner(Refs.homeAvatar, 24)
-	stroke(Refs.homeAvatar, COLORS.Cyan, 1.5, 0.2)
-	label({Size = UDim2.new(1, -90, 0, 14), Position = UDim2.new(0, 74, 0, 14), Text = "Welcome aboard, commander",
-		TextSize = 11, TextColor3 = COLORS.AccentGlow, Parent = card})
-	label({Size = UDim2.new(1, -90, 0, 20), Position = UDim2.new(0, 74, 0, 32),
-		Text = LocalPlayer.DisplayName .. " (@" .. LocalPlayer.Name .. ")", Font = Enum.Font.GothamBold,
-		TextSize = 14, TextTruncate = Enum.TextTruncate.AtEnd, Parent = card})
-
-	task.spawn(function()
-		local ok, img = pcall(function()
-			return (Players:GetUserThumbnailAsync(LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100))
-		end)
-		if ok and img then
-			AvatarImg.Image = img
-			Refs.homeAvatar.Image = img
-		end
-	end)
-
-	local grid = create("Frame", {
-		Size = UDim2.new(1, -8, 0, 54), BackgroundTransparency = 1, LayoutOrder = nextOrder(HomeScroll), Parent = HomeScroll,
-	})
-	create("UIGridLayout", {CellSize = UDim2.new(0.235, 0, 1, 0), CellPadding = UDim2.new(0.02, 0, 0, 0),
-		SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid})
-	local function statBox(title, initial)
-		local box = create("Frame", {BackgroundColor3 = COLORS.Card, BackgroundTransparency = 0.08, BorderSizePixel = 0,
-			LayoutOrder = nextOrder(grid), Parent = grid})
-		corner(box, 10)
-		stroke(box, COLORS.Stroke, 1)
-		label({Size = UDim2.new(1, -16, 0, 16), Position = UDim2.new(0, 10, 0, 8), Text = title,
-			TextSize = 10, TextColor3 = COLORS.TextDark, Parent = box})
-		return label({Size = UDim2.new(1, -16, 0, 20), Position = UDim2.new(0, 10, 0, 26), Text = initial,
-			TextSize = 13, Font = Enum.Font.GothamBold, TextColor3 = COLORS.Cyan, Parent = box})
-	end
-	Refs.players = statBox("Players", #Players:GetPlayers() .. "/" .. Players.MaxPlayers)
-	Refs.session = statBox("Session", "00m 00s")
-	Refs.fps     = statBox("FPS", "--")
-	Refs.ping    = statBox("Ping", "--")
-
-	local gameSec = AddSection(HomeScroll, "Game")
-	Refs.gameName = AddInfo(gameSec, "Name", "Loading...")
-	AddInfo(gameSec, "Place ID", tostring(game.PlaceId))
-	Refs.age = AddInfo(gameSec, "Server age", "--")
-	Refs.gameId = AddInfo(gameSec, "Game ID", tostring(game.GameId))
-	Refs.gameScript = AddInfo(gameSec, "Game script", "Detecting...")
-	Refs.device = AddInfo(gameSec, "Mode", IS_TOUCH and "Mobile / Emulator" or "PC")
-	AddButton(gameSec, "Copy Game Info (Name / PlaceId / GameId)", function()
-		local text = string.format("Name: %s | PlaceId: %d | GameId: %d", Refs.gameName.Text, game.PlaceId, game.GameId)
-		if clipboardFn then clipboardFn(text); Notify("Game Info", "Copied to clipboard", 2.5)
-		else Notify("Game Info", text, 5) end
-	end)
-
-	local about = AddSection(HomeScroll, "About")
-	AddText(about, "Dark Shadow Hub v5.0 Cosmic\nMenu: botão flutuante" .. (IS_TOUCH and "" or " ou tecla (padrão Right Shift)") .. ". Arraste a sidebar ou o cabeçalho para mover. Scripts de jogo aparecem sozinhos, só no jogo certo. Performance Guard ligado por padrão.")
-end
-
--- ---------- 10.2 PLAYER ----------
-do
-	local scroll = createTab("Player", ICONS.Player, true, ORDER.Player)
-
-	local move = AddSection(scroll, "Movement", "Player")
-	AddToggle(move, "Custom WalkSpeed", "Overrides your walk speed", false, function(on)
-		State.SpeedOn = on
-		if not on then Mv.restoreSpeed() end
-	end)
-	AddSlider(move, "WalkSpeed", 16, 200, State.Speed, 1, "", function(v) State.Speed = v end)
-	AddToggle(move, "Custom JumpPower", "Overrides your jump strength", false, function(on)
-		State.JumpOn = on
-		if not on then Mv.restoreJump() end
-	end)
-	AddSlider(move, "JumpPower", 50, 300, State.Jump, 1, "", function(v) State.Jump = v end)
-	AddToggle(move, "Infinite Jump", "Jump again while in the air", false, function(on) State.InfJump = on end)
-	AddToggle(move, "Noclip", "Walk through walls", false, function(on)
-		State.Noclip = on
-		if on then Mv.rebuildNoclip() else Mv.restoreNoclip() end
-	end)
-
-	local fly = AddSection(scroll, "Fly", "Player")
-	AddToggle(fly, "Fly", "Space / Ctrl = up / down. Mobile: joystick + camera", false, function(on)
-		State.Fly = on
-		if on then Mv.startFly() else Mv.stopFly() end
-	end)
-	AddSlider(fly, "Fly Speed", 10, 250, State.FlySpeed, 1, "", function(v) State.FlySpeed = v end)
-
-	local char = AddSection(scroll, "Character", "Player")
-	AddButton(char, "Reset Character", function()
-		local hum = getHum()
-		if hum then hum.Health = 0 end
-	end)
-	AddButton(char, "Copy Position", function()
-		local root = getRoot()
-		if not root then Notify("Position", "Character not found", 2) return end
-		local p = root.Position
-		local text = string.format("%.1f, %.1f, %.1f", p.X, p.Y, p.Z)
-		if clipboardFn then clipboardFn(text); Notify("Position", "Copied: " .. text, 2.5)
-		else Notify("Position", text, 4) end
-	end)
-end
-
--- ---------- 10.3 MAIN (Visuals / Perf / Utility / Server) ----------
-do
-	local page = createTab("Main", ICONS.Main, false, ORDER.Main)
-	local group = createSubGroup("Main", page)
-	local visuals = group.Add("Visuals", ICONS.Merge)
-	local perf    = group.Add("Perf", ICONS.Shield)
-	local utility = group.Add("Utility", ICONS.Settings)
-	local server  = group.Add("Server", ICONS.Server)
-
-	-- Visuals
-	local light = AddSection(visuals, "Lighting", "Main", "Visuals")
-	AddToggle(light, "Fullbright", "Removes darkness and shadows", false, function(on)
-		State.Fullbright = on
-		if on then
-			Vis.fb = Vis.fb or {Brightness = Lighting.Brightness, ClockTime = Lighting.ClockTime,
-				GlobalShadows = Lighting.GlobalShadows, Ambient = Lighting.Ambient, OutdoorAmbient = Lighting.OutdoorAmbient}
-		else
-			Vis.restoreFullbright()
-		end
-	end)
-	AddToggle(light, "Remove Fog", "Clears fog and atmosphere haze", false, function(on)
-		State.NoFog = on
-		if on then
-			if not Vis.fog then
-				Vis.fog = {FogEnd = Lighting.FogEnd, FogStart = Lighting.FogStart, Atmos = {}}
-				for _, c in ipairs(Lighting:GetChildren()) do
-					if c:IsA("Atmosphere") then Vis.fog.Atmos[c] = c.Density end
-				end
-			end
-		else
-			Vis.restoreFog()
-		end
-	end)
-
-	local cam = AddSection(visuals, "Camera", "Main", "Visuals")
-	AddToggle(cam, "Custom FOV", "Overrides the field of view", false, function(on)
-		State.FovOn = on
-		local c = workspace.CurrentCamera
-		if on then
-			if c then Original.Fov = Original.Fov or c.FieldOfView end
-		else
-			if c and Original.Fov then c.FieldOfView = Original.Fov end
-			Original.Fov = nil
-		end
-	end)
-	AddSlider(cam, "Field of View", 30, 120, State.Fov, 1, "°", function(v) State.Fov = v end)
-	AddSlider(cam, "Max Zoom Distance", 10, 1000, math.clamp(math.floor(origMaxZoom), 10, 1000), 1, "", function(v)
-		LocalPlayer.CameraMaxZoomDistance = v
-	end)
-
-	local espSec = AddSection(visuals, "ESP", "Main", "Visuals")
-	Refs.espPlayers = AddToggle(espSec, "Players ESP", "Highlight + name + distance", false, function(on)
-		ESP.SetEnabled("Players", on)
-		if Refs.espPlayersMini then Refs.espPlayersMini.Set(on, true) end
-	end)
-	AddSlider(espSec, "ESP Max Distance", 100, 2000, ESP.MaxDist, 50, "", function(v) ESP.MaxDist = v end)
-
-	-- Performance
-	local guard = AddSection(perf, "Performance Guard", "Main", "Perf")
-	AddToggle(guard, "Auto Guard", "Turns on Anti-Lag + FPS Boost if FPS drops", Perf.Guard, function(on) Perf.Guard = on end)
-	AddSlider(guard, "Low FPS threshold", 10, 60, Perf.LowFps, 1, "", function(v) Perf.LowFps = v end)
-	AddSlider(guard, "Critical FPS threshold", 5, 45, Perf.CritFps, 1, "", function(v) Perf.CritFps = v end)
-	AddToggle(guard, "Auto restore", "Restores settings when FPS recovers", Perf.AutoRestore, function(on) Perf.AutoRestore = on end)
-	Refs.perfFps = AddInfo(guard, "Current FPS", "--")
-	Refs.perfState = AddInfo(guard, "Guard state", "Monitoring")
-
-	local al = AddSection(perf, "Anti-Lag", "Main", "Perf")
-	PerfUI.al = AddToggle(al, "Anti-Lag", "Removes particles, trails, beams, blur, bloom", false, function(on)
-		Perf.autoAL = false
-		setAntiLag(on)
-	end)
-	PerfUI.ultra = AddToggle(al, "Ultra Boost (textures)", "Flat materials, no decals. Big FPS gain", false, setUltra)
-	AddText(al, "Anti-Lag age no seu cliente (efeitos e gráficos). Ele não consegue reduzir o lag do servidor em si, mas diminui o que o servidor te manda para desenhar.")
-
-	local gfx = AddSection(perf, "FPS Boost", "Main", "Perf")
-	PerfUI.gfx = AddToggle(gfx, "FPS Boost", "Lowest quality, no shadows, no terrain decor", false, function(on)
-		Perf.autoFB = false
-		setLowGfx(on)
-	end)
-	PerfUI.noRender = AddToggle(gfx, "Disable 3D Rendering", "Black screen, minimum CPU/GPU (AFK)", false, setNoRender)
-	if setfpscap then
-		AddSlider(gfx, "FPS Cap", 30, 240, 60, 5, "", function(v) pcall(setfpscap, v) end)
-	end
-
-	-- Utility
-	local util = AddSection(utility, "Utility", "Main", "Utility")
-	PerfUI.afk = AddToggle(util, "Anti-AFK", "Prevents the idle kick", false, setAntiAfk)
-	AddToggle(util, "Auto Rejoin", "Rejoins automatically if you get disconnected", false, setAutoRejoin)
-
-	-- Server
-	local function copyText(text, name)
-		if clipboardFn then
-			clipboardFn(text)
-			Notify(name, "Copied to clipboard", 2)
-		else
-			Notify(name, "Clipboard not supported", 2.5)
-		end
-	end
-	local function rejoin()
-		Notify("Rejoin", "Teleporting...", 3)
-		local ok, err = pcall(function()
-			if #Players:GetPlayers() <= 1 then
-				TeleportService:Teleport(game.PlaceId, LocalPlayer)
-			else
-				TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
-			end
-		end)
-		if not ok then Notify("Rejoin", "Failed: " .. tostring(err), 4) end
-	end
-	local hopping = false
-	local function serverHop()
-		if hopping then return end
-		hopping = true
-		Notify("Server Hop", "Searching for a server...", 3)
-		task.spawn(function()
-			local ok, result = pcall(function()
-				local url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100", game.PlaceId)
-				return game:GetService("HttpService"):JSONDecode(game:HttpGet(url))
-			end)
-			if not ok or type(result) ~= "table" or type(result.data) ~= "table" then
-				Notify("Server Hop", "Could not fetch the server list", 4)
-				hopping = false
-				return
-			end
-			local candidates = {}
-			for _, s in ipairs(result.data) do
-				if s.id ~= game.JobId and s.playing and s.maxPlayers and s.playing < s.maxPlayers then
-					table.insert(candidates, s)
-				end
-			end
-			if #candidates == 0 then
-				Notify("Server Hop", "No available servers found", 4)
-				hopping = false
-				return
-			end
-			local pick = candidates[math.random(#candidates)]
-			local ok2, err = pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, pick.id, LocalPlayer) end)
-			if not ok2 then Notify("Server Hop", "Failed: " .. tostring(err), 4) end
-			task.delay(5, function() hopping = false end)
-		end)
-	end
-
-	local info = AddSection(server, "Server Info", "Main", "Server")
-	Refs.srvPlayers = AddInfo(info, "Players", #Players:GetPlayers() .. "/" .. Players.MaxPlayers)
-	AddInfo(info, "Place ID", tostring(game.PlaceId))
-	AddInfo(info, "Job ID", game.JobId ~= "" and game.JobId or "Studio / Private")
-	Refs.srvAge = AddInfo(info, "Server age", "--")
-	local actions = AddSection(server, "Actions", "Main", "Server")
-	AddButton(actions, "Copy Job ID", function() copyText(game.JobId, "Job ID") end)
-	AddButton(actions, "Copy Place ID", function() copyText(tostring(game.PlaceId), "Place ID") end)
-	AddButton(actions, "Rejoin Server", rejoin)
-	AddButton(actions, "Server Hop", serverHop)
-end
-
--- ---------- 10.4 SETTINGS ----------
-local UnloadHub -- definido na seção 14
-do
-	local scroll = createTab("Settings", ICONS.Settings, true, ORDER.Settings)
-	local ui = AddSection(scroll, "Interface", "Settings")
-
-	if not IS_TOUCH then
-		local row = create("Frame", {Size = UDim2.new(1, 0, 0, 38), BackgroundTransparency = 1,
-			LayoutOrder = nextOrder(ui.Frame), Parent = ui.Frame})
-		label({Size = UDim2.new(1, -130, 1, 0), Position = UDim2.new(0, 14, 0, 0), Text = "Menu Keybind", Parent = row})
-		Refs.keyBtn = create("TextButton", {
-			Size = UDim2.fromOffset(96, 26), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0),
-			BackgroundColor3 = COLORS.CardHeader, Text = toggleKey.Name, TextColor3 = COLORS.TextMain, TextSize = 11,
-			Font = Enum.Font.GothamBold, AutoButtonColor = false, Parent = row,
-		})
-		corner(Refs.keyBtn, 6)
-		stroke(Refs.keyBtn, COLORS.Stroke, 1)
-		Refs.keyBtn.MouseButton1Click:Connect(function()
-			listeningKey = true
-			Sfx.Play("Click")
-			Refs.keyBtn.Text = "Press a key..."
-			tween(Refs.keyBtn, 0.15, {BackgroundColor3 = COLORS.AccentDark})
-		end)
-		registerRow(ui, row, "Menu Keybind")
-	end
-
-	AddSlider(ui, "UI Scale", 0.6, 1.4, 1, 0.05, "x", function(v)
-		userScale = v
-		currentScale = computeScale()
-		HubScale.Scale = currentScale
-		hubCenter = clampCenter(hubCenter)
-		MainFrame.Position = UDim2.fromOffset(hubCenter.X, hubCenter.Y)
-	end)
-	AddToggle(ui, "Notifications", "Show pop-up messages", true, function(on) notificationsEnabled = on end)
-	AddToggle(ui, "Starfield Effect", "Stars, nebula and planet. Disable for performance", State.Stars, function(on)
-		State.Stars = on
-		StarContainer.Visible = on and not Perf.Lite
-	end)
-
-	-- Efeitos sonoros com controle de volume
-	local snd = AddSection(scroll, "Sound", "Settings")
-	AddToggle(snd, "Sound Effects", "Clicks, toggles, menu and alerts", Sfx.Enabled, function(on)
-		Sfx.Enabled = on
-	end)
-	AddSlider(snd, "Volume", 0, 100, math.floor(Sfx.Volume * 100), 5, "%", function(v)
-		Sfx.Volume = v / 100
-	end)
-	AddButton(snd, "Test Sound", function()
-		Sfx.Play("On")
-		task.delay(0.18, function() Sfx.Play("Notify") end)
-	end)
-
-	local danger = AddSection(scroll, "Danger Zone", "Settings")
-	AddButton(danger, "Unload Hub", function() UnloadHub() end, true)
-end
-
--- ================================================================= --
--- 11. SISTEMA DE SCRIPTS POR JOGO
---  Cada jogo vira uma ABA própria e SÓ aparece dentro do jogo dele.
---    PlaceIds / GameIds  -> detecção EXATA
---    Names               -> nomes do jogo (ignora maiúsculas e símbolos)
---    Detect              -> função opcional que olha o conteúdo do jogo
--- ================================================================= --
-local cleanupFns = {}
-local GameModules = {}
-local loadedGames = {}
-
-local function RegisterGame(def)
-	table.insert(GameModules, def)
-end
-
-local function buildGameContext(def, group)
-	return {
-		Page = function(name, icon)
-			local scroll = group.Add(name, icon or ICONS.Merge)
-			return {Section = function(title) return AddSection(scroll, title, def.TabName, name) end}
-		end,
-		Notify = Notify, ScreenGui = ScreenGui, Icons = ICONS, copy = clipboardFn,
-		track = track,
-		IsVisible = function() return isOpen and tabs[def.TabName] ~= nil and tabs[def.TabName].Active end,
-		SetAntiAfk = function(on) setAntiAfk(on); PerfUI.afk.Set(on, true) end,
-		SetLowGfx = function(on) Perf.autoFB = false; setLowGfx(on); PerfUI.gfx.Set(on, true) end,
-		SetNoRender = function(on) setNoRender(on); PerfUI.noRender.Set(on, true) end,
-		OnUnload = function(fn) table.insert(cleanupFns, fn) end,
+	local LOCK_COLOR = Color3.fromRGB(255, 72, 104)
+	local PART_MODES = {"Head", "Torso", "Closest", "Root"}
+	local KEY_MODES  = {"Hold: Right Mouse", "Hold: Left Mouse", "Always On"}
+	local METHODS    = {"Camera", "Mouse (mousemoverel)"}
+
+	local Cfg = {
+		FOV = 150, Smooth = 35, MaxDist = 1500, Predict = 0, Deadzone = 2,
+		TeamCheck = true, WallCheck = true, Sticky = true, NPCs = false, Trigger = false,
+		ShowFov = true, ShowTracer = true, ShowReticle = true, Highlight = true,
+		KillFx = true, LockSound = true, Rainbow = false, PauseMenu = true, EspEnemies = false,
+		PartMode = 1, KeyMode = 1, Method = 1,
 	}
-end
 
-local function normalize(text)
-	return (string.gsub(string.lower(tostring(text or "")), "[^%w]", ""))
-end
+	local Aim = {
+		on = false, closing = false, intro = 0, holding = false, touchHeld = false,
+		target = nil, part = nil, name = "", dist = 0, lockedTarget = nil, lastScreen = nil,
+		locks = 0, kills = 0, fx = nil, conns = {}, hl = nil,
+		npcT = 0, npcList = {}, lastTrig = 0, hue = 0, hudText = "", warnedMouse = false, lastErr = 0,
+	}
 
-local function matchesGame(def, gameName)
-	for _, id in ipairs(def.PlaceIds or {}) do
-		if id == game.PlaceId then return true end
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.IgnoreWater = true
+
+	local VIM
+	pcall(function() VIM = game:GetService("VirtualInputManager") end)
+
+	-- ======================================================
+	-- 1) AUXILIARES
+	-- ======================================================
+	local function cam() return workspace.CurrentCamera end
+
+	local function ease(t) return 1 - (1 - t) ^ 3 end
+
+	-- Centro da mira: centro da tela (shift lock / 1ª pessoa / celular) ou posição do mouse
+	local function aimCenter()
+		local c = cam()
+		if not c then return Vector2.new() end
+		if IS_TOUCH or UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
+			return c.ViewportSize / 2
+		end
+		return UserInputService:GetMouseLocation()
 	end
-	for _, id in ipairs(def.GameIds or {}) do
-		if id == game.GameId then return true end
-	end
-	local candidates = {}
-	if def.NameMatch then candidates[#candidates + 1] = def.NameMatch end
-	for _, n in ipairs(def.Names or {}) do candidates[#candidates + 1] = n end
-	if #candidates > 0 then
-		local haystacks = {normalize(gameName), normalize(game.Name)}
-		for _, c in ipairs(candidates) do
-			local nc = normalize(c)
-			if #nc > 0 then
-				for _, h in ipairs(haystacks) do
-					if #h > 0 and string.find(h, nc, 1, true) then return true end
-				end
+
+	local function isEnemy(p)
+		if p == LocalPlayer then return false end
+		if Cfg.TeamCheck and not LocalPlayer.Neutral and not p.Neutral then
+			if LocalPlayer.Team ~= nil then
+				if p.Team == LocalPlayer.Team then return false end
+			elseif p.TeamColor == LocalPlayer.TeamColor then
+				return false
 			end
 		end
+		return true
 	end
-	return false
-end
 
-local function loadGame(def)
-	if loadedGames[def.Name] or not ScreenGui.Parent then return false end
-	loadedGames[def.Name] = true
-	local page = createTab(def.TabName, def.Icon or ICONS.Merge, false, ORDER.Game)
-	local group = createSubGroup(def.TabName, page)
-	local ok, err = pcall(def.Build, buildGameContext(def, group))
-	if ok then
-		Refs.gameScript.Text = def.Name
-		Notify("Game Script", def.Name .. " loaded", 3)
-	else
-		warn("[ShadowHub] " .. def.Name .. ": " .. tostring(err))
-		Refs.gameScript.Text = def.Name .. " (error)"
-		Notify("Game Script", "Failed to load " .. def.Name, 4)
+	local function alive(char)
+		local h = char:FindFirstChildOfClass("Humanoid")
+		return h == nil or h.Health > 0
 	end
-	return ok
-end
 
--- ================================================================= --
--- 12. JOGO: MERGE A MINI ARMY
---  Sub-abas: Quick | Merge | Economy | Combat | ESP | Tools
---
---  AUTO MERGE (novo): o script PEGA uma unidade, vai até uma IGUAL e
---  junta. Se não existir igual, SOLTA a unidade e tenta outra.
---  Tudo é feito por um CLONE FANTASMA: um clone seu fica parado onde
---  você estava (e a câmera segue ele), enquanto seu corpo real fica
---  invisível e faz o trabalho em alta velocidade. Quando termina (ou
---  você desliga), o corpo volta para o lugar do clone.
---
---  AUTO REBIRTH / UPGRADE: modo silencioso, clicam por trás da interface.
--- ================================================================= --
-RegisterGame({
-	Name = "Merge a Mini Army",
-	TabName = "Mini Army",
-	Icon = ICONS.Merge,
-	PlaceIds = {},
-	GameIds = {},
-	Names = {"Merge a Mini Army", "Merge Mini Army", "Mini Army"},
-	Detect = function()
-		local hasMerge, hasArmy = false, false
-		local ARMY = {"army", "deploy", "airdrop", "garrison", "outpost", "troop", "soldier"}
-		local function check(inst)
-			local n = string.lower(inst.Name)
-			if not hasMerge and string.find(n, "merge", 1, true) then hasMerge = true end
-			if not hasArmy and hasAny(n, ARMY) then hasArmy = true end
-		end
-		local i = 0
-		for _, d in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
-			check(d)
-			i = i + 1
-			if hasMerge and hasArmy then return true end
-			if i % 800 == 0 then task.wait() end
-			if i > 8000 then break end
+	local function refreshNPCs()
+		local now = os.clock()
+		if now - Aim.npcT < 1.5 then return Aim.npcList end
+		Aim.npcT = now
+		local list = {}
+		local function consider(m)
+			if m:IsA("Model") and m ~= LocalPlayer.Character and not Players:GetPlayerFromCharacter(m)
+				and m:FindFirstChildOfClass("Humanoid") then
+				list[#list + 1] = m
+			end
 		end
 		for _, c in ipairs(workspace:GetChildren()) do
-			check(c)
-			for _, g in ipairs(c:GetChildren()) do
-				check(g)
-				i = i + 1
-				if i % 800 == 0 then task.wait() end
-			end
-			if hasMerge and hasArmy then return true end
-		end
-		return hasMerge and hasArmy
-	end,
-	Build = function(ctx)
-		local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-		local running = true
-		local stats = {clicks = 0, rebirths = 0, merges = 0, fails = 0, captures = 0}
-		local ctl = {}
-		local MERGE_WORDS = {"merge", "combine", "fuse"}
-
-		local cfg = {
-			-- merge (pega -> vai até o igual -> junta / solta)
-			Merge = false, MergeDelay = 0.05, UseRemote = true, AutoLearn = true,
-			Ghost = true,            -- clone fantasma invisível
-			Glide = true,            -- movimento rápido (false = anda normal)
-			GlideSpeed = 170,        -- studs por segundo
-			Settle = 0.08,           -- tempo para o servidor ver sua posição
-			WalkTimeout = 8,
-			MergeBtn = false, UnitWords = {}, BaseRadius = 70,
-			-- economia
-			Upgrade = false, UpgradeEvery = 1, UpgradeWords = {}, Rebirth = false, RebirthEvery = 20,
-			Collect = false, Spin = false, Equip = false, Buy = false, ActionDelay = 0.8,
-			Silent = true,
-			MouseFallback = false,
-			-- combate
-			Deploy = false, DeployEvery = 5, Battle = false, Attack = false, AtkEvent = true, AtkCamp = true,
-			AtkBase = false, AtkTeleport = true, KeepDeployed = true, AtkTimeout = 12,
-			AutoCapture = false, Range = 25, Instant = false,
-			-- tools
-			Custom = false, CustomWords = {}, AfkRebirth = false,
-		}
-
-		local mergeOnce = false
-
-		local function isPlayerChar(i) return i:IsA("Model") and Players:GetPlayerFromCharacter(i) ~= nil end
-		local function posOf(i)
-			if i:IsA("BasePart") then return i.Position end
-			if i:IsA("Model") then return i:GetPivot().Position end
-			return nil
-		end
-
-		-- ======================================================
-		-- A) MINHA BASE (o merge só atua dentro dela)
-		-- ======================================================
-		local base = {model = nil, center = nil, radius = 70, label = "Not set"}
-		local lastBaseWarn = 0
-
-		local function matchesMe(v)
-			return v == LocalPlayer or v == LocalPlayer.UserId or v == LocalPlayer.Name
-				or v == LocalPlayer.DisplayName or tostring(v) == tostring(LocalPlayer.UserId)
-		end
-
-		local function ownedByMe(inst)
-			for k, v in pairs(inst:GetAttributes()) do
-				if hasAny(string.lower(k), {"owner", "player", "user"}) and matchesMe(v) then return true end
-			end
-			for _, c in ipairs(inst:GetChildren()) do
-				if c:IsA("ObjectValue") then
-					if c.Value == LocalPlayer then return true end
-				elseif c:IsA("StringValue") or c:IsA("IntValue") or c:IsA("NumberValue") then
-					if hasAny(string.lower(c.Name), {"owner", "player", "user"}) and matchesMe(c.Value) then return true end
+			consider(c)
+			if c:IsA("Folder") or (c:IsA("Model") and not c:FindFirstChildOfClass("Humanoid")) then
+				for _, g in ipairs(c:GetChildren()) do
+					consider(g)
+					if #list > 80 then break end
 				end
 			end
-			local ln = string.lower(inst.Name)
-			if string.find(ln, string.lower(LocalPlayer.Name), 1, true) then return true end
-			if #LocalPlayer.DisplayName >= 4 and string.find(ln, string.lower(LocalPlayer.DisplayName), 1, true) then return true end
-			return false
+			if #list > 80 then break end
 		end
+		Aim.npcList = list
+		return list
+	end
 
-		local function regionOf(inst)
-			if inst:IsA("Model") then
-				local cf, size = inst:GetBoundingBox()
-				return cf.Position, math.clamp(math.max(size.X, size.Z) / 2 + 8, 20, 400)
-			end
-			local minV, maxV, n
-			for _, d in ipairs(inst:GetDescendants()) do
-				if d:IsA("BasePart") then
-					local p = d.Position
-					minV = minV and Vector3.new(math.min(minV.X, p.X), math.min(minV.Y, p.Y), math.min(minV.Z, p.Z)) or p
-					maxV = maxV and Vector3.new(math.max(maxV.X, p.X), math.max(maxV.Y, p.Y), math.max(maxV.Z, p.Z)) or p
-					n = (n or 0) + 1
-					if n > 600 then break end
-				end
-			end
-			if not minV then return nil end
-			return (minV + maxV) / 2, math.clamp((maxV - minV).Magnitude / 2 + 8, 20, 400)
+	local function eachEnemy(fn)
+		for _, p in ipairs(Players:GetPlayers()) do
+			if isEnemy(p) and p.Character then fn(p.Character, p.DisplayName) end
 		end
-
-		local function detectBase()
-			local found
-			local count = 0
-			local function try(inst)
-				if found then return end
-				if (inst:IsA("Model") or inst:IsA("Folder")) and inst ~= LocalPlayer.Character
-					and not isPlayerChar(inst) and ownedByMe(inst) then
-					found = inst
-				end
-			end
-			for _, c in ipairs(workspace:GetChildren()) do
-				if found then break end
-				try(c)
-				if not found and not c:IsA("Terrain") and not c:IsA("Camera") and not isPlayerChar(c) then
-					for _, g in ipairs(c:GetChildren()) do
-						try(g)
-						count = count + 1
-						if found or count > 3000 then break end
-					end
-				end
-			end
-			if found then
-				local ok, center, radius = pcall(regionOf, found)
-				if ok and center then
-					base.model, base.center, base.radius, base.label = found, center, radius, found.Name
-					return true
-				end
-			end
-			return false
-		end
-
-		local function setBaseHere()
-			local root = getRoot()
-			if not root then return false end
-			base.model, base.center, base.radius = nil, root.Position, cfg.BaseRadius
-			base.label = "Manual (" .. math.floor(root.Position.X) .. ", " .. math.floor(root.Position.Z) .. ")"
-			return true
-		end
-
-		local function ensureBase(quiet)
-			if base.center then return true end
-			if detectBase() then return true end
-			if not quiet and os.clock() - lastBaseWarn > 10 then
-				lastBaseWarn = os.clock()
-				ctx.Notify("Base not found", "Stand in your base and press Set Base Here", 5)
-			end
-			return false
-		end
-
-		local function inMyBase(inst)
-			if not base.center then return false end
-			if base.model and base.model.Parent and inst:IsDescendantOf(base.model) then return true end
-			local p = posOf(inst)
-			return p ~= nil and (p - base.center).Magnitude <= base.radius
-		end
-
-		-- ======================================================
-		-- B) UNIDADES, GRUPOS E PARES IGUAIS
-		-- ======================================================
-		local META = {level = true, lvl = true, tier = true, rank = true, grade = true, stage = true,
-			mergelevel = true, unitlevel = true, evolution = true, star = true, stars = true,
-			unittype = true, type = true, class = true, kind = true, unitname = true, rarity = true}
-		local sizeCache = setmetatable({}, {__mode = "k"})
-		local cooldown = setmetatable({}, {__mode = "k"})
-		local failCount = setmetatable({}, {__mode = "k"})
-		local overlap = OverlapParams.new()
-		overlap.FilterType = Enum.RaycastFilterType.Exclude
-		overlap.MaxParts = 2500
-		local scan = {t = 0, groups = {}, units = 0, pairs = 0}
-
-		local function modelSize(m)
-			local s = sizeCache[m]
-			if s then return s end
-			local ok, ext = pcall(function() return m:GetExtentsSize() end)
-			s = ok and math.max(ext.X, ext.Y, ext.Z) or 99
-			sizeCache[m] = s
-			return s
-		end
-
-		local function topSmallModel(p)
-			local best
-			local cur = p.Parent
-			local depth = 0
-			while cur and cur ~= workspace and depth < 6 do
-				if cur:IsA("Model") then
-					if modelSize(cur) < 16 then best = cur else break end
-				end
-				cur = cur.Parent
-				depth = depth + 1
-			end
-			return best
-		end
-
-		local function unitPart(u)
-			if u:IsA("BasePart") then return u end
-			return u.PrimaryPart or u:FindFirstChild("HumanoidRootPart") or u:FindFirstChildWhichIsA("BasePart", true)
-		end
-
-		-- Chave que identifica "unidades iguais" (mesmo tipo + mesmo nível)
-		local function unitKey(m)
-			local parts, meta = {}, false
-			for k, v in pairs(m:GetAttributes()) do
-				local lk = string.lower(k)
-				local tv = type(v)
-				if META[lk] and (tv == "number" or tv == "string" or tv == "boolean") then
-					parts[#parts + 1] = lk .. ":" .. tostring(v)
-					meta = true
-				end
-			end
-			for _, c in ipairs(m:GetChildren()) do
-				if c:IsA("ValueBase") and META[string.lower(c.Name)] then
-					local ok, v = pcall(function() return c.Value end)
-					if ok and v ~= nil then
-						parts[#parts + 1] = string.lower(c.Name) .. ":" .. tostring(v)
-						meta = true
-					end
-				end
-			end
-			local name = m.Name
-			if meta then
-				name = string.gsub(name, "%d+", "")
-			else
-				name = string.gsub(name, "%x%x%x%x%x%x%x%x%-%x%x%x%x.*$", "")
-				if not string.find(name, "%d") then
-					for _, d in ipairs(m:GetDescendants()) do
-						if d:IsA("TextLabel") and string.find(d.Text, "%d") then
-							parts[#parts + 1] = "t:" .. d.Text
-							break
-						end
-					end
-				end
-			end
-			local unitLike = meta
-			if not unitLike then
-				unitLike = (m:FindFirstChildOfClass("Humanoid") ~= nil) or (m:FindFirstChildOfClass("AnimationController") ~= nil)
-			end
-			if #cfg.UnitWords > 0 then unitLike = hasAny(string.lower(m.Name), cfg.UnitWords) end
-			if not unitLike then return nil end
-			table.sort(parts)
-			return name .. "|" .. table.concat(parts, ",")
-		end
-
-		local function scanUnits(force)
-			local now = os.clock()
-			if not force and now - scan.t < (Perf.Lite and 2 or 0.6) then return scan end
-			scan.t = now
-			local groups, total, seen = {}, 0, {}
-			local function consider(m)
-				if seen[m] or not m.Parent then return end
-				seen[m] = true
-				if isPlayerChar(m) then return end
-				if not inMyBase(m) then return end
-				local key = unitKey(m)
-				if key then
-					local g = groups[key]
-					if not g then g = {}; groups[key] = g end
-					g[#g + 1] = m
-					total = total + 1
-				end
-			end
-			if base.center then
-				overlap.FilterDescendantsInstances = {LocalPlayer.Character, ESPFolder, workspace.CurrentCamera}
-				local ok, found = pcall(function() return workspace:GetPartBoundsInRadius(base.center, base.radius, overlap) end)
-				if ok and found then
-					for i = 1, #found do
-						local part = found[i]
-						local m = topSmallModel(part)
-						if not m and #cfg.UnitWords > 0 and hasAny(string.lower(part.Name), cfg.UnitWords) then m = part end
-						if m then consider(m) end
-					end
-				end
-			end
-			local pairsN = 0
-			for _, g in pairs(groups) do pairsN = pairsN + math.floor(#g / 2) end
-			scan.groups, scan.units, scan.pairs = groups, total, pairsN
-			return scan
-		end
-
-		-- ======================================================
-		-- C) BOTÕES DA INTERFACE DO JOGO (clique silencioso)
-		-- ======================================================
-		local CATS = {
-			{key = "Rebirth",  words = {"rebirth"}, boostOk = true},
-			{key = "Upgrade",  words = {"upgrade"}},
-			{key = "Deploy",   words = {"deploy"}},
-			{key = "Reset",    words = {"reset army", "recall", "retreat"}},
-			{key = "MergeBtn", words = {"merge", "combine"}, boostOk = true},
-			{key = "Equip",    words = {"equip best", "equip all", "best units"}},
-			{key = "Collect",  words = {"collect", "claim"}},
-			{key = "Spin",     words = {"spin"}},
-			{key = "Battle",   words = {"start battle", "next wave", "next stage", "start wave"}},
-			{key = "Buy",      words = {"buy", "spawn", "summon", "recruit", "hire"}},
-			{key = "Drop",     words = {"put down", "let go", "release", "drop"}},   -- botão de soltar a unidade
-		}
-		local BLOCK_HARD = {"robux", "r$", "gamepass", "game pass", "premium", "gift", "donat", "purchase", "vip"}
-		local BOOST = {"x2", "2x", "x3", "3x", "x4", "4x"}
-		local VIM
-		pcall(function() VIM = game:GetService("VirtualInputManager") end)
-
-		local buttons, trackingButtons, scanDone = {}, false, false
-		local function addButton(d)
-			if (d:IsA("TextButton") or d:IsA("ImageButton")) and not d:IsDescendantOf(ctx.ScreenGui) then
-				buttons[d] = {text = nil, t = 0}
+		if Cfg.NPCs then
+			for _, m in ipairs(refreshNPCs()) do
+				if m.Parent then fn(m, m.Name) end
 			end
 		end
-		local function ensureButtonTracking()
-			if trackingButtons then return end
-			trackingButtons = true
-			task.spawn(function()
-				local i = 0
-				for _, d in ipairs(PlayerGui:GetDescendants()) do
-					addButton(d)
-					i = i + 1
-					if i % 300 == 0 then task.wait() end
-				end
-				scanDone = true
-			end)
-			ctx.track(PlayerGui.DescendantAdded:Connect(addButton))
-			ctx.track(PlayerGui.DescendantRemoving:Connect(function(d) buttons[d] = nil end))
-		end
+	end
 
-		local function refreshInfo(b, info, now)
-			if info.text and now - info.t < 2 then return end
-			local t = b:IsA("TextButton") and b.Text or ""
-			for _, c in ipairs(b:GetDescendants()) do
-				if c:IsA("TextLabel") or c:IsA("TextButton") then t = t .. " " .. c.Text end
-			end
-			t = string.lower(t .. " " .. b.Name)
-			info.text, info.t = t, now
-			info.block = hasAny(t, BLOCK_HARD)
-			info.boost = hasAny(t, BOOST)
-			local own = string.lower(b:IsA("TextButton") and b.Text or "")
-			info.confirm = (own == "yes" or own == "confirm" or own == "ok" or string.find(own, "confirm", 1, true) ~= nil)
-			info.cat = nil
-			for _, cat in ipairs(CATS) do
-				if hasAny(t, cat.words) then info.cat = cat break end
-			end
-			-- "airdrop" não é botão de soltar
-			if info.cat and info.cat.key == "Drop" and string.find(t, "airdrop", 1, true) then info.cat = nil end
-		end
+	local function candidateParts(char, root)
+		local head = char:FindFirstChild("Head")
+		local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or root
+		local mode = PART_MODES[Cfg.PartMode]
+		if mode == "Head" then return {head or root} end
+		if mode == "Torso" then return {torso} end
+		if mode == "Root" then return {root} end
+		local list = {}
+		if head then list[#list + 1] = head end
+		if torso then list[#list + 1] = torso end
+		if root and root ~= torso then list[#list + 1] = root end
+		return list
+	end
 
-		local function isShown(b)
-			if not b.Parent then return false end
-			local cur = b
-			while cur and cur ~= PlayerGui do
-				if cur:IsA("GuiObject") and not cur.Visible then return false end
-				if cur:IsA("ScreenGui") and not cur.Enabled then return false end
-				cur = cur.Parent
-			end
-			return b.AbsoluteSize.X > 0 and b.AbsoluteSize.Y > 0
-		end
+	-- Parede no caminho? (partes quase transparentes não bloqueiam)
+	local function visible(part, char)
+		if not Cfg.WallCheck then return true end
+		local c = cam()
+		local origin = c.CFrame.Position
+		local mine = LocalPlayer.Character
+		rayParams.FilterDescendantsInstances = mine and {mine, c} or {c}
+		local res = workspace:Raycast(origin, part.Position - origin, rayParams)
+		if not res then return true end
+		local hit = res.Instance
+		if hit:IsDescendantOf(char) then return true end
+		return hit.Transparency >= 0.9
+	end
 
-		local function fireSignal(sig)
-			if getconnections then
-				local ok, conns = pcall(getconnections, sig)
-				if ok and conns and #conns > 0 then
-					for _, c in ipairs(conns) do pcall(function() c:Fire() end) end
-					return true
-				end
-			end
-			return false
-		end
-
-		local function clickButton(b)
-			if fireSignal(b.MouseButton1Click) then return true end
-			if fireSignal(b.Activated) then return true end
-			if firesignal then
-				if pcall(firesignal, b.MouseButton1Click) then return true end
-				if pcall(firesignal, b.Activated) then return true end
-			end
-			if VIM and cfg.MouseFallback and isShown(b) then
-				local sg = b:FindFirstAncestorWhichIsA("ScreenGui")
-				local inset = (sg and sg.IgnoreGuiInset) and Vector2.zero or GuiService:GetGuiInset()
-				local pos = b.AbsolutePosition + b.AbsoluteSize / 2 + inset
-				return pcall(function()
-					VIM:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 0)
-					VIM:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 0)
-				end)
-			end
-			return false
-		end
-
-		local lastConfirm = 0
-		local function clickCategory(due, now, allowConfirm)
-			local list = {}
-			for b in pairs(buttons) do list[#list + 1] = b end
-			local n = 0
-			for i = 1, #list do
-				local b = list[i]
-				local info = buttons[b]
-				if info and b.Parent then
-					refreshInfo(b, info, now)
-					if not info.block then
-						local k1 = info.cat and info.cat.key
-						local key
-						if k1 and due[k1] and (not info.boost or info.cat.boostOk) then
-							key = k1
-						elseif due.Upgrade and #cfg.UpgradeWords > 0 and hasAny(info.text, cfg.UpgradeWords) then
-							key = "Upgrade"
-						elseif due.Custom and #cfg.CustomWords > 0 and hasAny(info.text, cfg.CustomWords) then
-							key = "Custom"
-						elseif allowConfirm and now < lastConfirm and info.confirm then
-							key = "Confirm"
-						end
-						if key == "Upgrade" and #cfg.UpgradeWords > 0 and not hasAny(info.text, cfg.UpgradeWords) then key = nil end
-						if key and (cfg.Silent or isShown(b)) then
-							if clickButton(b) then
-								n = n + 1
-								stats.clicks = stats.clicks + 1
-								if key == "Rebirth" then
-									stats.rebirths = stats.rebirths + 1
-									lastConfirm = now + 4
-								end
-							end
-						end
-					end
-				end
-				if i % 60 == 0 then task.wait() end
-			end
-			return n
-		end
-
-		local QUIET_KEYS = {Rebirth = true, Upgrade = true}
-
-		local function clickNow(key)
-			ensureButtonTracking()
-			local waited = 0
-			while not scanDone and waited < 3 do task.wait(0.1); waited = waited + 0.1 end
-			local n = clickCategory({[key] = true}, os.clock(), key == "Rebirth")
-			if QUIET_KEYS[key] then return end
-			ctx.Notify(key, n > 0 and (n .. " click(s)") or (cfg.Silent and "No matching button found" or "No visible button. Open the menu in the game"), 3)
-		end
-
-		local DUE_KEYS = {"Rebirth", "Upgrade", "Deploy", "MergeBtn", "Collect", "Spin", "Equip", "Battle", "Buy", "Custom"}
-		local function everyOf(k)
-			local v
-			if k == "Rebirth" then v = cfg.RebirthEvery
-			elseif k == "Upgrade" then v = cfg.UpgradeEvery
-			elseif k == "Deploy" then v = cfg.DeployEvery
-			else v = cfg.ActionDelay end
-			return Perf.Lite and math.max(v, 1) or v
-		end
-
-		task.spawn(function()
-			local last = {}
-			while running and ctx.ScreenGui.Parent do
-				task.wait(0.25)
-				local now = os.clock()
-				local due, any = {}, false
-				for _, k in ipairs(DUE_KEYS) do
-					if cfg[k] and now - (last[k] or 0) >= everyOf(k) then
-						due[k] = true
-						last[k] = now
-						any = true
-					end
-				end
-				if any then
-					ensureButtonTracking()
-					pcall(clickCategory, due, now, cfg.Rebirth)
-				end
-			end
-		end)
-
-		-- ======================================================
-		-- D) CLONE FANTASMA
-		--  Um clone seu (parado, só visual) fica onde você estava e
-		--  a câmera segue ele. Seu corpo real fica invisível e faz o
-		--  trabalho. Ao parar, o corpo volta para o lugar do clone.
-		-- ======================================================
-		local ghost = {active = false, clone = nil, home = nil, t = 0}
-
-		local function setHidden(char, on)
-			for _, d in ipairs(char:GetDescendants()) do
-				if d:IsA("BasePart") then d.LocalTransparencyModifier = on and 1 or 0 end
+	local function evaluate(char, center, fov)
+		local root = char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
+		if not root or not alive(char) then return nil end
+		local c = cam()
+		local d3 = (root.Position - c.CFrame.Position).Magnitude
+		if d3 > Cfg.MaxDist then return nil end
+		local bestPart, bestScr
+		for _, part in ipairs(candidateParts(char, root)) do
+			local v, onScreen = c:WorldToViewportPoint(part.Position)
+			if onScreen and v.Z > 0 then
+				local d = (Vector2.new(v.X, v.Y) - center).Magnitude
+				if d <= fov and (not bestScr or d < bestScr) then bestPart, bestScr = part, d end
 			end
 		end
+		if not bestPart or not visible(bestPart, char) then return nil end
+		return bestPart, bestScr, d3
+	end
 
-		local function ghostStart()
-			if ghost.active or not cfg.Ghost then return end
-			local char, root, hum, cam = LocalPlayer.Character, getRoot(), getHum(), workspace.CurrentCamera
-			if not (char and root and hum and cam) or hum.Health <= 0 then return end
-			local oldArch = char.Archivable
-			char.Archivable = true
-			local ok, cl = pcall(function() return char:Clone() end)
-			char.Archivable = oldArch
-			if not ok or not cl then return end
-			for _, d in ipairs(cl:GetDescendants()) do
-				if d:IsA("BaseScript") then
-					d:Destroy()
-				elseif d:IsA("BasePart") then
-					d.Anchored = true
-					d.CanCollide = false
-					d.CanTouch = false
-					d.CanQuery = false
-				end
-			end
-			cl.Name = "GhostClone"
-			cl.Parent = cam
-			ghost.clone, ghost.home, ghost.active, ghost.t = cl, root.CFrame, true, os.clock()
-			local chum = cl:FindFirstChildOfClass("Humanoid")
-			if chum then cam.CameraSubject = chum end
-			setHidden(char, true)
-		end
-
-		local function ghostStop()
-			if not ghost.active then return end
-			ghost.active = false
-			local char, root, hum, cam = LocalPlayer.Character, getRoot(), getHum(), workspace.CurrentCamera
-			if root and ghost.home then
-				root.CFrame = ghost.home
-				root.AssemblyLinearVelocity = Vector3.zero
-			end
-			if char then setHidden(char, false) end
-			if cam and hum then cam.CameraSubject = hum end
-			if ghost.clone then ghost.clone:Destroy() end
-			ghost.clone = nil
-		end
-
-		local function ghostTick()
-			if not ghost.active then return end
-			local hum = getHum()
-			if not hum or hum.Health <= 0 then
-				ghostStop()
-				return
-			end
-			if os.clock() - ghost.t > 1.5 then
-				ghost.t = os.clock()
-				local char = LocalPlayer.Character
-				if char then setHidden(char, true) end
-			end
-		end
-
-		-- ======================================================
-		-- E) EXECUÇÃO DO MERGE: PEGA -> VAI ATÉ O IGUAL -> JUNTA / SOLTA
-		-- ======================================================
-		local learned = env.__ShadowMiniLearn
-		local recording, captured = false, nil
-		local remoteBadUntil, remoteFails = 0, 0
-
-		local PICK_WORDS = {"pick", "grab", "hold", "carry", "take", "lift", "drag", "select"}
-		local DROP_WORDS = {"drop", "place", "put down", "release", "let go", "throw"}
-		local MATE_WORDS = {"merge", "combine", "fuse", "place", "drop", "put"}
-
-		local promptCache = setmetatable({}, {__mode = "k"})
-		local function unitPrompts(u)
-			local c = promptCache[u]
-			local now = os.clock()
-			if c and (#c.list > 0 or now - c.t < 2) then return c.list end
-			local list = {}
-			for _, d in ipairs(u:GetDescendants()) do
-				if d:IsA("ProximityPrompt") then list[#list + 1] = d end
-			end
-			promptCache[u] = {t = now, list = list}
-			return list
-		end
-
-		local function promptTextOf(d)
-			return string.lower(d.ActionText .. " " .. d.ObjectText .. " " .. d.Name)
-		end
-
-		-- Dispara os prompts da unidade que combinam com "want"; se nenhum combinar, qualquer um que não seja "avoid"
-		local function firePromptsOf(u, want, avoid)
-			if not fireproximityprompt then return 0 end
-			local list = unitPrompts(u)
-			local n = 0
-			for _, d in ipairs(list) do
-				if d.Parent and d.Enabled and hasAny(promptTextOf(d), want) then
-					pcall(fireproximityprompt, d)
-					n = n + 1
-				end
-			end
-			if n == 0 then
-				for _, d in ipairs(list) do
-					if d.Parent and d.Enabled and not hasAny(promptTextOf(d), avoid) then
-						pcall(fireproximityprompt, d)
-						n = n + 1
-					end
-				end
-			end
-			return n
-		end
-
-		local function touchUnit(u)
-			local p, root = unitPart(u), getRoot()
-			if not (p and root) or not firetouchinterest then return end
+	local function fireShot(center)
+		if mouse1click then
+			pcall(mouse1click)
+		elseif VIM then
 			pcall(function()
-				firetouchinterest(root, p, 0)
-				firetouchinterest(root, p, 1)
+				VIM:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
+				VIM:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
 			end)
 		end
+	end
 
-		local function fireLearned(a, b)
-			local L = learned
-			if not (L and L.remote and L.remote.Parent) then return false end
-			local args = {}
-			for i = 1, L.args.n do args[i] = L.args[i] end
-			if a and #L.inst >= 2 then
-				args[L.inst[1]] = a
-				args[L.inst[2]] = b
-			elseif a and #L.inst == 1 then
-				args[L.inst[1]] = a
-			end
-			task.spawn(function()
-				pcall(function()
-					if L.method == "InvokeServer" then L.remote:InvokeServer(table.unpack(args, 1, L.args.n))
-					else L.remote:FireServer(table.unpack(args, 1, L.args.n)) end
-				end)
+	-- ======================================================
+	-- 2) EFEITOS VISUAIS (criados só ao ligar, destruídos ao desligar)
+	-- ======================================================
+	local function buildFx()
+		local fx = {tweens = {}, tintFrames = {}, tintStrokes = {}}
+		local function loop(inst, time, props, style, rev)
+			local t = TweenService:Create(inst, TweenInfo.new(time, style or Enum.EasingStyle.Linear,
+				Enum.EasingDirection.InOut, -1, rev or false), props)
+			t:Play()
+			fx.tweens[#fx.tweens + 1] = t
+		end
+
+		fx.root = create("Frame", {
+			Name = "AimbotFX", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
+			ZIndex = 30, Active = false, Parent = ScreenGui,
+		})
+
+		-- Anel de FOV: brilho externo + anel principal com "cometa" girando
+		fx.glow = create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, ZIndex = 30, Parent = fx.root,
+		})
+		corner(fx.glow, 1000)
+		fx.glowStroke = stroke(fx.glow, COLORS.Cyan, 7, 0.88)
+
+		fx.fov = create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = COLORS.Accent,
+			BackgroundTransparency = 0.94, BorderSizePixel = 0, ZIndex = 31, Parent = fx.root,
+		})
+		corner(fx.fov, 1000)
+		fx.fovStroke = stroke(fx.fov, COLORS.Cyan, 2, 0)
+		fx.fovGrad = create("UIGradient", {
+			Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0.85), NumberSequenceKeypoint.new(0.18, 0),
+				NumberSequenceKeypoint.new(0.5, 0.85), NumberSequenceKeypoint.new(1, 0.85),
+			}),
+			Parent = fx.fovStroke,
+		})
+		loop(fx.fovGrad, 2.2, {Rotation = 360})
+
+		-- marcas N/E/S/O no anel
+		for _, def in ipairs({{0.5, 0, 2, 9}, {1, 0.5, 9, 2}, {0.5, 1, 2, 9}, {0, 0.5, 9, 2}}) do
+			local tick = create("Frame", {
+				AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(def[1], def[2]),
+				Size = UDim2.fromOffset(def[3], def[4]), BackgroundColor3 = COLORS.Cyan,
+				BorderSizePixel = 0, ZIndex = 32, Parent = fx.fov,
+			})
+			fx.tintFrames[#fx.tintFrames + 1] = tick
+		end
+
+		-- ponto central
+		fx.dot = create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(4, 4),
+			BackgroundColor3 = COLORS.Cyan, BorderSizePixel = 0, ZIndex = 32, Parent = fx.root,
+		})
+		corner(fx.dot, 2)
+		fx.tintFrames[#fx.tintFrames + 1] = fx.dot
+
+		-- Linha (tracer) do centro até o alvo
+		fx.tracer = create("Frame", {
+			AnchorPoint = Vector2.new(0, 0.5), Size = UDim2.fromOffset(0, 1), BackgroundColor3 = COLORS.Cyan,
+			BorderSizePixel = 0, Visible = false, ZIndex = 31, Parent = fx.root,
+		})
+		create("UIGradient", {
+			Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 0.9), NumberSequenceKeypoint.new(1, 0)}),
+			Parent = fx.tracer,
+		})
+
+		-- Retículo no alvo: anel + marcas giratórias + nome + vida
+		fx.ret = create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(54, 54), BackgroundTransparency = 1,
+			Visible = false, ZIndex = 32, Parent = fx.root,
+		})
+		corner(fx.ret, 100)
+		fx.retStroke = stroke(fx.ret, COLORS.Cyan, 2, 0.05)
+		fx.tintStrokes[#fx.tintStrokes + 1] = fx.retStroke
+		fx.retSpin = create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromScale(1.4, 1.4), BackgroundTransparency = 1, ZIndex = 32, Parent = fx.ret,
+		})
+		for _, def in ipairs({{0.5, 0, 3, 11}, {1, 0.5, 11, 3}, {0.5, 1, 3, 11}, {0, 0.5, 11, 3}}) do
+			local tick = create("Frame", {
+				AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(def[1], def[2]),
+				Size = UDim2.fromOffset(def[3], def[4]), BackgroundColor3 = COLORS.Cyan,
+				BorderSizePixel = 0, ZIndex = 33, Parent = fx.retSpin,
+			})
+			fx.tintFrames[#fx.tintFrames + 1] = tick
+		end
+		loop(fx.retSpin, 3, {Rotation = 360})
+		fx.retName = label({
+			AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 1, 16), Size = UDim2.fromOffset(180, 14),
+			Text = "", Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Center,
+			TextStrokeTransparency = 0.35, ZIndex = 33, Parent = fx.ret,
+		})
+		fx.retBarBg = create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 1, 33), Size = UDim2.fromOffset(72, 4),
+			BackgroundColor3 = Color3.fromRGB(8, 14, 36), BorderSizePixel = 0, ZIndex = 33, Parent = fx.ret,
+		})
+		corner(fx.retBarBg, 2)
+		fx.retBar = create("Frame", {
+			Size = UDim2.fromScale(1, 1), BackgroundColor3 = COLORS.Green, BorderSizePixel = 0,
+			ZIndex = 34, Parent = fx.retBarBg,
+		})
+		corner(fx.retBar, 2)
+
+		-- Pílula de status no topo (desliza ao ligar/desligar)
+		fx.hud = create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, -44), Size = UDim2.fromOffset(240, 30),
+			BackgroundColor3 = COLORS.Sidebar, BackgroundTransparency = 0.08, BorderSizePixel = 0,
+			ZIndex = 33, Parent = fx.root,
+		})
+		corner(fx.hud, 15)
+		fx.hudStroke = stroke(fx.hud, COLORS.Cyan, 1.5, 0.15)
+		fx.tintStrokes[#fx.tintStrokes + 1] = fx.hudStroke
+		fx.hudDot = create("Frame", {
+			Size = UDim2.fromOffset(8, 8), Position = UDim2.new(0, 14, 0.5, -4), BackgroundColor3 = COLORS.Cyan,
+			BorderSizePixel = 0, ZIndex = 34, Parent = fx.hud,
+		})
+		corner(fx.hudDot, 4)
+		fx.tintFrames[#fx.tintFrames + 1] = fx.hudDot
+		loop(fx.hudDot, 0.7, {BackgroundTransparency = 0.75}, Enum.EasingStyle.Sine, true)
+		fx.hudLabel = label({
+			Size = UDim2.new(1, -40, 1, 0), Position = UDim2.new(0, 30, 0, 0), Text = "AIMBOT  ·  SCANNING",
+			Font = Enum.Font.GothamBold, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd,
+			ZIndex = 34, Parent = fx.hud,
+		})
+
+		-- Botão AIM para celular (segure para mirar)
+		if IS_TOUCH then
+			fx.touchBtn = create("TextButton", {
+				AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.86, 0, 0.58, 0), Size = UDim2.fromOffset(64, 64),
+				BackgroundColor3 = COLORS.CardHeader, BackgroundTransparency = 0.15, Text = "AIM",
+				TextColor3 = COLORS.TextMain, Font = Enum.Font.GothamBlack, TextSize = 14,
+				AutoButtonColor = false, ZIndex = 40, Parent = fx.root,
+			})
+			corner(fx.touchBtn, 32)
+			fx.touchStroke = stroke(fx.touchBtn, COLORS.Cyan, 2, 0.1)
+			fx.touchBtn.InputBegan:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+					Aim.touchHeld = true
+					fx.touchStroke.Color = LOCK_COLOR
+				end
 			end)
-			return true
-		end
-
-		local MOVE_KEYS = {Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D,
-			Enum.KeyCode.Up, Enum.KeyCode.Down, Enum.KeyCode.Left, Enum.KeyCode.Right}
-		local function userIsMoving()
-			if Mv.controls then
-				local ok, v = pcall(function() return Mv.controls:GetMoveVector() end)
-				if ok and v and v.Magnitude > 0.1 then return true end
-			end
-			for _, k in ipairs(MOVE_KEYS) do
-				if UserInputService:IsKeyDown(k) then return true end
-			end
-			return false
-		end
-
-		local function mergeActive()
-			return running and ctx.ScreenGui.Parent ~= nil and (cfg.Merge or mergeOnce)
-		end
-
-		local function stopWalk()
-			local hum, root = getHum(), getRoot()
-			if hum and root then pcall(function() hum:MoveTo(root.Position) end) end
-		end
-
-		-- Movimento normal (andando)
-		local function walkTo(pos, timeout)
-			local root, hum = getRoot(), getHum()
-			if not (root and hum) or State.Fly then return "stop" end
-			hum:MoveTo(pos)
-			local t0 = os.clock()
-			local last, stuckAt = root.Position, os.clock()
-			while mergeActive() do
-				if not ghost.active and userIsMoving() then
-					stopWalk()
-					return "user"
-				end
-				root, hum = getRoot(), getHum()
-				if not (root and hum) then return "stop" end
-				local cur = root.Position
-				local flat = Vector3.new(cur.X - pos.X, 0, cur.Z - pos.Z).Magnitude
-				if flat <= 3.5 then
-					stopWalk()
-					return "arrived"
-				end
-				if os.clock() - t0 > timeout then
-					stopWalk()
-					return "timeout"
-				end
-				if (cur - last).Magnitude > 0.35 then
-					last, stuckAt = cur, os.clock()
-				elseif os.clock() - stuckAt > 0.9 then
-					hum.Jump = true
-					hum:MoveTo(pos)
-					stuckAt = os.clock()
-				end
-				task.wait(0.1)
-			end
-			stopWalk()
-			return "stop"
-		end
-
-		-- Movimento rápido (desliza o corpo até o alvo, sem esperar pathing)
-		local function glideTo(pos, timeout)
-			local goal = pos + Vector3.new(0, 2.5, 0)
-			local t0 = os.clock()
-			while mergeActive() do
-				local root = getRoot()
-				if not root then return false end
-				local cur = root.Position
-				local d = goal - cur
-				local dist = d.Magnitude
-				if dist <= 2.5 then
-					root.AssemblyLinearVelocity = Vector3.zero
-					return true
-				end
-				if os.clock() - t0 > timeout then return false end
-				local dt = RunService.Heartbeat:Wait()
-				root = getRoot()
-				if not root then return false end
-				local step = math.min(dist, cfg.GlideSpeed * dt)
-				root.CFrame = CFrame.new(cur + d.Unit * step) * (root.CFrame - root.CFrame.Position)
-				root.AssemblyLinearVelocity = Vector3.zero
-			end
-			return false
-		end
-
-		local function moveTo(pos, timeout)
-			if cfg.Glide then return glideTo(pos, timeout) end
-			return walkTo(pos, timeout) == "arrived"
-		end
-
-		local function nearestPair()
-			local sc = scanUnits()
-			local root = getRoot()
-			local now = os.clock()
-			local bestA, bestB, bestScore
-			for _, list in pairs(sc.groups) do
-				local n = #list
-				for i = 1, n do
-					local a = list[i]
-					local pa = unitPart(a)
-					if pa and a.Parent and (not cooldown[a] or cooldown[a] < now) then
-						for j = i + 1, n do
-							local b = list[j]
-							local pb = unitPart(b)
-							if pb and b.Parent and (not cooldown[b] or cooldown[b] < now) then
-								local score = (pa.Position - pb.Position).Magnitude
-								if root then score = score + (pa.Position - root.Position).Magnitude * 0.5 end
-								if not bestScore or score < bestScore then
-									bestA, bestB, bestScore = a, b, score
-								end
-							end
-						end
-					end
-				end
-			end
-			if bestA then return {bestA, bestB} end
-			return nil
-		end
-
-		local function isMerged(a, b, keyA, keyB)
-			return (not a.Parent) or (not b.Parent) or unitKey(a) ~= keyA or unitKey(b) ~= keyB
-		end
-
-		local function markOk(a, b)
-			stats.merges = stats.merges + 1
-			failCount[a], failCount[b] = nil, nil
-		end
-
-		local function markFail(a, b)
-			local n = (failCount[a] or 0) + 1
-			failCount[a] = n
-			if b then failCount[b] = n end
-			local t = os.clock() + math.min(2 * n, 12)
-			cooldown[a] = t
-			if b then cooldown[b] = t end
-			stats.fails = stats.fails + 1
-		end
-
-		-- Unidade que está na sua mão (modelo filho do personagem)
-		local function heldUnit()
-			local c = LocalPlayer.Character
-			if not c then return nil end
-			for _, ch in ipairs(c:GetChildren()) do
-				if ch:IsA("Model") and unitKey(ch) then return ch end
-			end
-			return nil
-		end
-
-		local carry = nil   -- {unit, key, t}: o que acabamos de pegar
-
-		-- Solta o que estiver na mão (prompt de soltar, botão "Drop", desequipar)
-		local function dropHeld(u)
-			if u and u.Parent then firePromptsOf(u, DROP_WORDS, PICK_WORDS) end
-			ensureButtonTracking()
-			pcall(clickCategory, {Drop = true}, os.clock(), false)
-			local hum = getHum()
-			if hum then pcall(function() hum:UnequipTools() end) end
-			carry = nil
-		end
-
-		-- Procura a unidade IGUAL mais próxima (mesma chave), diferente da que está na mão
-		local function findMate(key, src)
-			local sc = scanUnits(true)
-			local list = sc.groups[key]
-			if not list then return nil end
-			local root = getRoot()
-			local now = os.clock()
-			local best, bestD
-			for _, u in ipairs(list) do
-				if u ~= src and u.Parent and (not cooldown[u] or cooldown[u] < now) then
-					local p = unitPart(u)
-					if p then
-						local d = root and (p.Position - root.Position).Magnitude or 0
-						if not bestD or d < bestD then best, bestD = u, d end
-					end
-				end
-			end
-			return best
-		end
-
-		-- Um ciclo: (1) se está segurando, vai até o igual e junta; se não há igual, solta.
-		--           (2) se não está segurando, vai até a unidade de um par e pega.
-		local function mergeCycle()
-			local held = heldUnit()
-			local key, src
-			if carry and carry.unit and os.clock() - carry.t < 10 then
-				key, src = carry.key, carry.unit
-			elseif held then
-				key, src = unitKey(held), held
-			end
-
-			if key then
-				local mate = findMate(key, src)
-				if mate then
-					local pm = unitPart(mate)
-					local mateKey = unitKey(mate)
-					if pm and moveTo(pm.Position, cfg.WalkTimeout) then
-						task.wait(cfg.Settle)
-						firePromptsOf(mate, MATE_WORDS, PICK_WORDS)
-						touchUnit(mate)
-						task.wait(cfg.Settle + 0.1)
-						local merged = (not mate.Parent) or unitKey(mate) ~= mateKey or (src ~= nil and not src.Parent)
-						if merged then
-							markOk(src or mate, mate)
-						else
-							dropHeld(held or src)   -- não juntou: solta
-							markFail(src or mate, mate)
-						end
-					else
-						dropHeld(held or src)       -- não conseguiu chegar: solta
-						markFail(src or mate, mate)
-					end
-				else
-					dropHeld(held or src)           -- sem igual: solta
-				end
-				carry = nil
-				return "done"
-			end
-
-			local pair = nearestPair()
-			if not pair then return "idle" end
-			local a = pair[1]
-			local pa = unitPart(a)
-			local keyA = unitKey(a)
-			if not (pa and keyA) then markFail(a, pair[2]) return "done" end
-			if not moveTo(pa.Position, cfg.WalkTimeout) then
-				markFail(a, pair[2])
-				return "done"
-			end
-			task.wait(cfg.Settle)
-			firePromptsOf(a, PICK_WORDS, DROP_WORDS)
-			touchUnit(a)
-			task.wait(cfg.Settle)
-			carry = {unit = a, key = keyA, t = os.clock()}
-			return "done"
-		end
-
-		-- Loop do Auto Merge
-		task.spawn(function()
-			local idleSince = nil
-			while running and ctx.ScreenGui.Parent do
-				if cfg.Merge or mergeOnce then
-					if ensureBase() then
-						if cfg.UseRemote and learned and learned.direct and learned.remote then
-							-- remote direto (merge de tudo de uma vez)
-							local sc = scanUnits()
-							if sc.pairs > 0 then
-								fireLearned()
-								stats.merges = stats.merges + 1
-							else
-								mergeOnce = false
-							end
-							task.wait(math.max(cfg.MergeDelay, Perf.Lite and 0.4 or 0.1))
-						elseif not cfg.Ghost and not carry and userIsMoving() then
-							task.wait(0.2)   -- sem clone: você andando tem prioridade
-						else
-							local handled = false
-							-- remote aprendido com alvos: mais rápido, sem sair do lugar
-							if cfg.UseRemote and learned and learned.remote and learned.remote.Parent
-								and not learned.direct and not carry and os.clock() > remoteBadUntil then
-								local pair = nearestPair()
-								if pair then
-									ghostStart()
-									local a, b = pair[1], pair[2]
-									local ka, kb = unitKey(a), unitKey(b)
-									fireLearned(a, b)
-									task.wait(0.3)
-									if isMerged(a, b, ka, kb) then
-										markOk(a, b)
-										remoteFails = 0
-										handled = true
-									else
-										remoteFails = remoteFails + 1
-										if remoteFails >= 3 then
-											remoteBadUntil = os.clock() + 30
-											remoteFails = 0
-										end
-									end
-								end
-							end
-							local res = handled and "done" or nil
-							if not res then
-								local nearAny = scanUnits().pairs > 0 or carry ~= nil or heldUnit() ~= nil
-								if nearAny then
-									ghostStart()
-									local ok, r = pcall(mergeCycle)
-									if not ok then
-										warn("[ShadowHub] merge: " .. tostring(r))
-										carry = nil
-										r = "done"
-										task.wait(0.3)
-									end
-									res = r
-								else
-									res = "idle"
-								end
-							end
-							ghostTick()
-							scan.t = 0
-							if res == "idle" then
-								idleSince = idleSince or os.clock()
-								if not cfg.Merge then mergeOnce = false end
-								if not cfg.Merge or os.clock() - idleSince > 3 then
-									ghostStop()   -- sem trabalho: devolve o controle para você
-								end
-								task.wait(0.4)
-							else
-								idleSince = nil
-								task.wait(math.max(cfg.MergeDelay, Perf.Lite and 0.3 or 0.02))
-							end
-						end
-					else
-						mergeOnce = false
-						ghostStop()
-						task.wait(1)
-					end
-				else
-					ghostStop()
-					carry = nil
-					task.wait(0.3)
-				end
-			end
-			ghostStop()
-		end)
-
-		-- Aprender o remote do merge (você faz 1 merge à mão e o script copia)
-		local SKIP_REMOTE = {"position", "move", "camera", "ping", "heartbeat", "analytics", "log", "cursor", "mouse", "look"}
-		local function onRemote(remote, method, ...)
-			if not recording then return end
-			local lname = string.lower(remote.Name)
-			if hasAny(lname, SKIP_REMOTE) then return end
-			local args = table.pack(...)
-			local inst = {}
-			for i = 1, args.n do
-				local v = args[i]
-				if typeof(v) == "Instance" and (v:IsA("Model") or v:IsA("BasePart")) and inMyBase(v) then
-					inst[#inst + 1] = i
-				end
-			end
-			local byName = hasAny(lname, MERGE_WORDS)
-			if byName or #inst >= 2 then
-				if not captured or byName then
-					captured = {remote = remote, method = method, args = args, inst = inst,
-						byName = byName, direct = (#inst == 0)}
-				end
-			end
-		end
-
-		local function startLearning(seconds, quiet)
-			if recording then return end
-			if not installHook() then
-				if not quiet then ctx.Notify("Learn", "Executor lacks hookmetamethod. Clone mode still works", 5) end
-				return
-			end
-			if not ensureBase(quiet) then return end
-			captured, recording = nil, true
-			env.__ShadowHookFn = onRemote
-			if not quiet then ctx.Notify("Learning", "Merge two units BY HAND now (" .. seconds .. "s)", 6) end
-			task.spawn(function()
-				local t0 = os.clock()
-				while running and recording and not captured and os.clock() - t0 < seconds do task.wait(0.25) end
-				recording = false
-				env.__ShadowHookFn = nil
-				if captured then
-					learned = captured
-					env.__ShadowMiniLearn = learned
-					if Refs.mRemote then Refs.mRemote.Text = learned.remote.Name end
-					ctx.Notify("Learned", learned.remote.Name .. (learned.direct and " (direct)" or " (targets)"), 4)
-				elseif not quiet then
-					ctx.Notify("Learn", "Nothing captured. Try again", 4)
+			fx.touchBtn.InputEnded:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+					Aim.touchHeld = false
+					fx.touchStroke.Color = COLORS.Cyan
 				end
 			end)
 		end
 
-		-- ======================================================
-		-- F) TERRITÓRIOS, EVENTOS E BASE ATTACK
-		-- ======================================================
-		local KEYWORDS = {"captur", "conquer", "garrison", "compound", "airbase", "territor", "airdrop", "camp", "outpost", "crate", "event"}
-		local prompts, originalHold = {}, {}
-		local territoryCache = setmetatable({}, {__mode = "k"})
-		local trackingPrompts = false
-		local atkDone = setmetatable({}, {__mode = "k"})
-		local atk = {status = "Idle", target = "None", event = "None"}
+		return fx
+	end
 
-		local function promptPart(p)
-			local par = p.Parent
-			if not par then return nil end
-			if par:IsA("BasePart") then return par end
-			if par:IsA("Attachment") then return par.Parent:IsA("BasePart") and par.Parent or nil end
-			if par:IsA("Model") then return par.PrimaryPart or par:FindFirstChildWhichIsA("BasePart", true) end
-			return nil
+	local function pulseAt(fx, pos, color)
+		local r = create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(pos.X, pos.Y), Size = UDim2.fromOffset(24, 24),
+			BackgroundTransparency = 1, ZIndex = 34, Parent = fx.root,
+		})
+		corner(r, 100)
+		local s = stroke(r, color, 2.5, 0)
+		tween(r, 0.5, {Size = UDim2.fromOffset(130, 130)}, Enum.EasingStyle.Quad)
+		tween(s, 0.5, {Transparency = 1})
+		task.delay(0.55, function() r:Destroy() end)
+	end
+
+	local function killBurst(fx, pos)
+		for i = 1, 14 do
+			local a = math.rad(i * (360 / 14) + math.random(-12, 12))
+			local d = math.random(40, 95)
+			local sz = math.random(3, 6)
+			local p = create("Frame", {
+				AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(pos.X, pos.Y), Size = UDim2.fromOffset(sz, sz),
+				BackgroundColor3 = (i % 2 == 0) and COLORS.Cyan or LOCK_COLOR, BorderSizePixel = 0, ZIndex = 35, Parent = fx.root,
+			})
+			corner(p, 3)
+			tween(p, 0.6, {
+				Position = UDim2.fromOffset(pos.X + math.cos(a) * d, pos.Y + math.sin(a) * d),
+				BackgroundTransparency = 1, Size = UDim2.fromOffset(1, 1),
+			}, Enum.EasingStyle.Quad)
+			task.delay(0.65, function() p:Destroy() end)
 		end
+		local t = label({
+			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(pos.X, pos.Y - 30), Size = UDim2.fromOffset(180, 18),
+			Text = "✦ ELIMINATED ✦", Font = Enum.Font.GothamBlack, TextSize = 13, TextColor3 = LOCK_COLOR,
+			TextXAlignment = Enum.TextXAlignment.Center, TextStrokeTransparency = 0.4, ZIndex = 36, Parent = fx.root,
+		})
+		tween(t, 0.9, {Position = UDim2.fromOffset(pos.X, pos.Y - 70), TextTransparency = 1, TextStrokeTransparency = 1}, Enum.EasingStyle.Quad)
+		task.delay(0.95, function() t:Destroy() end)
+	end
 
-		local function promptText(p)
-			local par = p.Parent
-			return string.lower(p.ActionText .. " " .. p.ObjectText .. " " .. (par and par.Name or "") .. " " .. ((par and par.Parent) and par.Parent.Name or ""))
+	-- ======================================================
+	-- 3) DESLIGAR / LIMPAR TUDO
+	-- ======================================================
+	local function syncEsp()
+		ESP.SetEnabled("AimEnemies", Aim.on and Cfg.EspEnemies)
+	end
+
+	local function hardStop()
+		Aim.on, Aim.closing = false, false
+		pcall(function() RunService:UnbindFromRenderStep("ShadowAimbot") end)
+		for _, cn in ipairs(Aim.conns) do pcall(function() cn:Disconnect() end) end
+		Aim.conns = {}
+		Aim.holding, Aim.touchHeld = false, false
+		if Aim.hl then pcall(function() Aim.hl:Destroy() end); Aim.hl = nil end
+		local fx = Aim.fx
+		Aim.fx = nil
+		if fx then
+			for _, t in ipairs(fx.tweens) do pcall(function() t:Cancel() end) end
+			pcall(function() fx.root:Destroy() end)
 		end
+		Aim.target, Aim.part, Aim.lockedTarget, Aim.lastScreen = nil, nil, nil, nil
+		ESP.SetEnabled("AimEnemies", false)
+	end
 
-		local function isTerritory(p)
-			local c = territoryCache[p]
-			if c ~= nil then return c end
-			if not p.Parent then return false end
-			local r = hasAny(promptText(p), KEYWORDS)
-			territoryCache[p] = r
-			return r
+	-- ======================================================
+	-- 4) LOOP PRINCIPAL (só existe enquanto o Aimbot está ligado)
+	-- ======================================================
+	local function step(dt)
+		local fx = Aim.fx
+		if not fx then return end
+		local c = cam()
+
+		if Aim.on then Aim.intro = math.min(1, Aim.intro + dt * 3)
+		else Aim.intro = Aim.intro - dt * 3.5 end
+		local e = ease(math.clamp(Aim.intro, 0, 1))
+		Aim.hue = (Aim.hue + dt * 0.25) % 1
+
+		local paused = Cfg.PauseMenu and isOpen
+		fx.root.Visible = not paused
+		local center = aimCenter()
+
+		-- anel de FOV (cresce ao ligar, encolhe ao desligar)
+		local diameter = Cfg.FOV * 2 * e
+		fx.fov.Size = UDim2.fromOffset(diameter, diameter)
+		fx.fov.Position = UDim2.fromOffset(center.X, center.Y)
+		fx.glow.Size = UDim2.fromOffset(diameter + 12, diameter + 12)
+		fx.glow.Position = fx.fov.Position
+		fx.fov.Visible = Cfg.ShowFov
+		fx.glow.Visible = Cfg.ShowFov
+		fx.dot.Position = fx.fov.Position
+		fx.dot.Visible = e > 0.3
+		fx.hud.Position = UDim2.new(0.5, 0, 0, -44 + 54 * e)
+		if fx.touchBtn then fx.touchBtn.Visible = e > 0.2 end
+
+		-- desligando: só anima a saída e limpa
+		if not Aim.on then
+			fx.ret.Visible = false
+			fx.tracer.Visible = false
+			if Aim.hl then Aim.hl.Adornee = nil end
+			if Aim.intro <= 0 then hardStop() end
+			return
 		end
+		if not c then return end
 
-		local function kindOf(text)
-			if hasAny(text, {"airdrop", "event", "crate", "drop"}) then return "Event", COLORS.Gold end
-			if hasAny(text, {"camp", "outpost", "fort"}) then return "Camp", Color3.fromRGB(255, 90, 90) end
-			return "Base", COLORS.AccentGlow
-		end
-
-		local function applyInstant(p)
-			if p.HoldDuration > 0 then
-				originalHold[p] = originalHold[p] or p.HoldDuration
-				p.HoldDuration = 0
-			end
-		end
-		local function restoreInstant()
-			for p, h in pairs(originalHold) do
-				if p.Parent then p.HoldDuration = h end
-			end
-			originalHold = {}
-		end
-		local function addPrompt(d)
-			if d:IsA("ProximityPrompt") then
-				prompts[d] = true
-				if cfg.Instant then applyInstant(d) end
-			end
-		end
-		local function ensurePromptTracking()
-			if trackingPrompts then return end
-			trackingPrompts = true
-			task.spawn(function()
-				local i = 0
-				for _, d in ipairs(workspace:GetDescendants()) do
-					addPrompt(d)
-					i = i + 1
-					if i % 400 == 0 then task.wait() end
-				end
-			end)
-			ctx.track(workspace.DescendantAdded:Connect(addPrompt))
-			ctx.track(workspace.DescendantRemoving:Connect(function(d)
-				if prompts[d] then prompts[d] = nil; originalHold[d] = nil; territoryCache[d] = nil end
-			end))
-		end
-
-		local function pickTarget()
-			local root = getRoot()
-			if not root then return nil end
-			local best, bestScore
-			local now = os.clock()
-			for p in pairs(prompts) do
-				if p.Parent and p.Enabled and isTerritory(p) and (atkDone[p] or 0) < now then
-					local part = promptPart(p)
-					if part and not (base.center and inMyBase(part)) then
-						local kind = kindOf(promptText(p))
-						if (kind == "Event" and cfg.AtkEvent) or (kind == "Camp" and cfg.AtkCamp) or (kind == "Base" and cfg.AtkBase) then
-							local score = (part.Position - root.Position).Magnitude * (kind == "Event" and 0.3 or 1)
-							if not bestScore or score < bestScore then best, bestScore = p, score end
-						end
-					end
-				end
-			end
-			return best
-		end
-
-		-- Auto Base Attack: vai até o alvo, segura até capturar, passa para o próximo
-		task.spawn(function()
-			local origin, lastDeploy = nil, 0
-			while running and ctx.ScreenGui.Parent do
-				task.wait(0.4)
-				if cfg.Attack and fireproximityprompt then
-					ensurePromptTracking()
-					if cfg.KeepDeployed and os.clock() - lastDeploy > 6 then
-						lastDeploy = os.clock()
-						ensureButtonTracking()
-						clickCategory({Deploy = true}, os.clock(), false)
-					end
-					local p = pickTarget()
-					if p then
-						local part = promptPart(p)
-						local root = getRoot()
-						atk.target = part and part.Parent and part.Parent.Name or "Target"
-						atk.status = "Attacking"
-						if part and root then
-							if cfg.AtkTeleport then
-								if not origin then origin = root.CFrame end
-								root.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0))
-								root.AssemblyLinearVelocity = Vector3.zero
-								task.wait(0.15)
-							end
-							local t0 = os.clock()
-							repeat
-								pcall(fireproximityprompt, p)
-								task.wait(0.25)
-							until not p.Parent or not p.Enabled or os.clock() - t0 > cfg.AtkTimeout or not cfg.Attack or not running
-							atkDone[p] = os.clock() + 20
-							stats.captures = stats.captures + 1
-						else
-							atkDone[p] = os.clock() + 20
-						end
-					else
-						atk.status = "Searching"
-						atk.target = "None"
-						if origin then
-							local r = getRoot()
-							if r then r.CFrame = origin end
-							origin = nil
-						end
-					end
-				else
-					atk.status = cfg.Attack and "No fireproximityprompt" or "Idle"
-				end
-			end
-		end)
-
-		-- Captura simples por proximidade (sem teleporte)
-		task.spawn(function()
-			while running and ctx.ScreenGui.Parent do
-				task.wait(0.5)
-				if cfg.AutoCapture and fireproximityprompt then
-					local root = getRoot()
-					if root then
-						local rpos = root.Position
-						for p in pairs(prompts) do
-							if p.Parent and p.Enabled and isTerritory(p) then
-								local part = promptPart(p)
-								if part and (part.Position - rpos).Magnitude <= cfg.Range then pcall(fireproximityprompt, p) end
-							end
-						end
-					end
-				end
-			end
-		end)
-
-		-- ======================================================
-		-- G) ESP DO JOGO (pares de merge + alvos/eventos)
-		-- ======================================================
-		local function hashStr(s)
-			local h = 7
-			for i = 1, #s do h = (h * 31 + string.byte(s, i)) % 100003 end
-			return h
-		end
-
-		ESP.Register("MiniPairs", function()
-			if not ensureBase(true) then return {} end
-			local sc = scanUnits()
-			local out = {}
-			for key, list in pairs(sc.groups) do
-				if #list >= 2 then
-					local col = Color3.fromHSV((hashStr(key) % 360) / 360, 0.75, 1)
-					for _, u in ipairs(list) do
-						local p = unitPart(u)
-						if p and #out < 40 then
-							out[#out + 1] = {part = p, hl = u, text = "MERGE x" .. #list, color = col}
-						end
-					end
-				end
-			end
-			return out
-		end)
-
-		local nameCache = {t = 0, list = {}}
-		local NAME_WORDS = {"airdrop", "camp", "crate", "event", "airport", "garrison", "compound", "outpost"}
-		ESP.Register("MiniTargets", function()
-			local out = {}
-			for p in pairs(prompts) do
-				if p.Parent and isTerritory(p) then
-					local part = promptPart(p)
-					if part and not (base.center and inMyBase(part)) then
-						local txt = promptText(p)
-						local kind, col = kindOf(txt)
-						local par = p.Parent
-						local nm = (p.ObjectText ~= "" and p.ObjectText) or (par and par.Name) or kind
-						out[#out + 1] = {part = part, hl = (par and par:IsA("Model")) and par or nil,
-							text = "[" .. kind .. "] " .. nm, color = col}
-					end
-				end
-			end
-			local now = os.clock()
-			if now - nameCache.t > 4 then
-				nameCache.t = now
-				local list = {}
-				for _, c in ipairs(workspace:GetChildren()) do
-					if not c:IsA("Terrain") and not c:IsA("Camera") and not isPlayerChar(c) then
-						local function check(i)
-							if #list >= 30 then return end
-							if (i:IsA("Model") or i:IsA("BasePart")) and hasAny(string.lower(i.Name), NAME_WORDS) then
-								local part = i:IsA("BasePart") and i or unitPart(i)
-								if part and not (base.center and inMyBase(part)) then list[#list + 1] = {inst = i, part = part} end
-							end
-						end
-						check(c)
-						for _, g in ipairs(c:GetChildren()) do check(g) end
-					end
-				end
-				nameCache.list = list
-			end
-			for _, e in ipairs(nameCache.list) do
-				if e.part.Parent then
-					local kind, col = kindOf(string.lower(e.inst.Name))
-					out[#out + 1] = {part = e.part, hl = e.inst:IsA("Model") and e.inst or nil,
-						text = "[" .. kind .. "] " .. e.inst.Name, color = col}
-				end
-			end
-			return out
-		end)
-
-		-- ======================================================
-		-- H) INTERFACE: Quick | Merge | Economy | Combat | ESP | Tools
-		-- ======================================================
-		local function simple(sec, key, title, desc)
-			ctl[key] = AddToggle(sec, title, desc, false, function(on)
-				cfg[key] = on
-				if on then ensureButtonTracking() end
-			end)
-		end
-
-		-- ---------- QUICK ----------
-		local pq = ctx.Page("Quick", ctx.Icons.Bolt)
-		do
-			local qs = pq.Section("Main Automation")
-			ctl.Merge = AddToggle(qs, "Auto Merge", "Clone picks a unit, merges with its twin, drops if none", false, function(on)
-				cfg.Merge = on
-				if on then
-					ensureBase()
-					if cfg.AutoLearn and not learned then startLearning(600, true) end
-				end
-			end)
-			ctl.Upgrade = AddToggle(qs, "Auto Upgrade", "Silent. No menu opens on your screen", false, function(on)
-				cfg.Upgrade = on
-				if on then ensureButtonTracking() end
-			end, true)
-			ctl.Rebirth = AddToggle(qs, "Auto Rebirth", "Silent. Careful: resets your progress", false, function(on)
-				cfg.Rebirth = on
-				if on then ensureButtonTracking() end
-			end, true)
-			simple(qs, "Collect", "Auto Collect / Claim", "Silent claim of rewards")
-			simple(qs, "Buy", "Auto Buy / Spawn Units", "Silent buy and spawn")
-
-			local qi = pq.Section("Live Status")
-			Refs.qBase   = AddInfo(qi, "My base", "Not set")
-			Refs.qPairs  = AddInfo(qi, "Pairs ready", "0")
-			Refs.qMerges = AddInfo(qi, "Merges done", "0")
-			Refs.qClicks = AddInfo(qi, "Silent clicks", "0")
-			Refs.qGhost  = AddInfo(qi, "Ghost clone", "Standby")
-			AddText(qi, "Ligue Auto Merge e pode deixar: um clone seu fica parado onde você estava (a câmera segue ele) e seu corpo, invisível, pega as unidades, leva até a igual e junta. Se não houver igual, solta. Quando acabam os pares, você volta a ter o controle.")
-		end
-
-		-- ---------- MERGE ----------
-		local pm = ctx.Page("Merge", ctx.Icons.Merge)
-		do
-			local afk = pm.Section("AFK Farm")
-			local AFK_KEYS = {"Merge", "Upgrade", "Collect", "Buy", "Equip", "Spin"}
-			ctl.AFK = AddToggle(afk, "AFK Farm Mode", "Anti-AFK + merge, buy, upgrade, collect, equip, spin", false, function(on)
-				ctx.SetAntiAfk(on)
-				for _, key in ipairs(AFK_KEYS) do
-					cfg[key] = on
-					ctl[key].Set(on, true)
-				end
-				cfg.Rebirth = on and cfg.AfkRebirth
-				ctl.Rebirth.Set(cfg.Rebirth, true)
-				if on then
-					ensureButtonTracking()
-					ensureBase()
-					if cfg.AutoLearn and not learned then startLearning(600, true) end
-				end
-				if on and not (firesignal or getconnections or VIM) then
-					ctx.Notify("AFK Mode", "Executor can't click UI buttons", 4)
-				end
-			end)
-			AddToggle(afk, "AFK includes Rebirth", "Also auto rebirths while AFK is on", false, function(on)
-				cfg.AfkRebirth = on
-				if ctl.AFK.Get() then cfg.Rebirth = on; ctl.Rebirth.Set(on, true) end
-			end)
-			AddToggle(afk, "AFK FPS Boost", "Lowest graphics while idle", false, function(on) ctx.SetLowGfx(on) end)
-			AddToggle(afk, "AFK Disable 3D Rendering", "Black screen, minimum CPU/GPU", false, function(on) ctx.SetNoRender(on) end)
-
-			local am = pm.Section("Auto Merge")
-			AddToggle(am, "Invisible ghost clone", "Clone stays put, your real body works invisibly", cfg.Ghost, function(on)
-				cfg.Ghost = on
-				if not on then ghostStop() end
-			end)
-			AddToggle(am, "Fast glide", "Off = walks normally (slower, legit-looking)", cfg.Glide, function(on) cfg.Glide = on end)
-			AddSlider(am, "Glide speed", 40, 400, cfg.GlideSpeed, 5, " st/s", function(v) cfg.GlideSpeed = v end)
-			AddSlider(am, "Settle delay", 0.02, 0.4, cfg.Settle, 0.01, "s", function(v) cfg.Settle = v end)
-			AddSlider(am, "Merge delay", 0.02, 1.5, cfg.MergeDelay, 0.01, "s", function(v) cfg.MergeDelay = v end)
-			AddSlider(am, "Travel timeout", 3, 20, cfg.WalkTimeout, 1, "s", function(v) cfg.WalkTimeout = v end)
-			AddButton(am, "Merge Now (one round)", function()
-				if ensureBase() then mergeOnce = true else ctx.Notify("Merge", "Set your base first", 3) end
-			end)
-			Refs.mUnits  = AddInfo(am, "Units in my base", "0")
-			Refs.mPairs  = AddInfo(am, "Pairs found", "0")
-			Refs.mMerges = AddInfo(am, "Merges done", "0")
-			Refs.mFails  = AddInfo(am, "Failed attempts", "0")
-
-			local mb = pm.Section("My Base (merge only here)")
-			Refs.mBase = AddInfo(mb, "Base", "Not set")
-			AddButton(mb, "Detect Base (auto)", function()
-				base.center, base.model = nil, nil
-				if detectBase() then ctx.Notify("Base", "Found: " .. base.label, 3)
-				else ctx.Notify("Base", "Not found. Use Set Base Here", 4) end
-			end)
-			AddButton(mb, "Set Base Here", function()
-				if setBaseHere() then ctx.Notify("Base", "Base set at your position", 3)
-				else ctx.Notify("Base", "Character not found", 2) end
-			end)
-			AddSlider(mb, "Base radius (manual)", 20, 250, cfg.BaseRadius, 5, " st", function(v)
-				cfg.BaseRadius = v
-				if base.center and not base.model then base.radius = v end
-			end)
-			AddText(mb, "Fique no centro da sua base e toque em Set Base Here se a detecção automática não achar. Só unidades dentro dessa área são mescladas.")
-
-			local mm = pm.Section("Method")
-			AddToggle(mm, "Use learned remote", "Fastest: replays the real merge call", true, function(on) cfg.UseRemote = on end)
-			AddToggle(mm, "Auto-learn remote", "Learns it when you merge by hand once", true, function(on) cfg.AutoLearn = on end)
-			Refs.mRemote = AddInfo(mm, "Learned remote", learned and learned.remote and learned.remote.Name or "None")
-			AddButton(mm, "Learn Merge Remote", function() startLearning(20, false) end)
-			AddButton(mm, "Forget learned remote", function()
-				learned = nil
-				env.__ShadowMiniLearn = nil
-				Refs.mRemote.Text = "None"
-			end)
-			AddInput(mm, "Unit names (optional)", "ex: soldier, tank", "", function(text)
-				cfg.UnitWords = splitWords(text)
-				scan.t = 0
-				ctx.Notify("Units", #cfg.UnitWords > 0 and (#cfg.UnitWords .. " filter(s) set") or "Auto-detect units", 2)
-			end)
-			ctl.MergeBtn = AddToggle(mm, "Also click UI Merge button", "If the game has a Merge button", false, function(on)
-				cfg.MergeBtn = on
-				if on then ensureButtonTracking() end
-			end)
-			AddText(mm, "Como pegar/soltar: o script usa os prompts da unidade (Pick / Grab / Hold... e Drop / Place...) e o botão 'Drop' da tela, se existir. Se o seu jogo usa outros nomes, rode Scan My Base Units na aba Tools e me mande o resultado.")
-		end
-
-		-- ---------- ECONOMY ----------
-		local pe = ctx.Page("Economy", ctx.Icons.Economy)
-		do
-			local up = pe.Section("Auto Buy Upgrades")
-			AddInput(up, "Only these upgrades", "ex: spawn level, max", "", function(text)
-				cfg.UpgradeWords = splitWords(text)
-				ctx.Notify("Upgrades", #cfg.UpgradeWords > 0 and (#cfg.UpgradeWords .. " filter(s)") or "All upgrades", 2)
-			end)
-			AddSlider(up, "Upgrade delay", 0.2, 5, cfg.UpgradeEvery, 0.1, "s", function(v) cfg.UpgradeEvery = v end)
-			AddButton(up, "Upgrade Now", function() clickNow("Upgrade") end)
-
-			local rb = pe.Section("Auto Rebirth")
-			AddSlider(rb, "Rebirth delay", 1, 300, cfg.RebirthEvery, 1, "s", function(v) cfg.RebirthEvery = v end)
-			AddButton(rb, "Rebirth Now", function() clickNow("Rebirth") end)
-			AddText(rb, "Ligue Auto Upgrade e Auto Rebirth na aba Quick. Eles rodam em silêncio. Depois do clique em Rebirth o script também confirma o diálogo (Confirm / Yes).")
-
-			local sl = pe.Section("Silent Mode")
-			AddToggle(sl, "Silent clicks", "Works with the game menu closed", true, function(on) cfg.Silent = on end)
-			AddToggle(sl, "Mouse fallback", "Virtual mouse if no signal works (visible buttons only)", false, function(on) cfg.MouseFallback = on end)
-			AddText(sl, "No modo silencioso o script aciona os botões por trás da interface: nada abre na tela e seu mouse/dedo continua livre. Deixe o Mouse fallback desligado, ele usa clique de mouse real.")
-
-			local ex = pe.Section("Extras")
-			simple(ex, "Equip", "Auto Equip Best", "Clicks equip best / equip all")
-			simple(ex, "Spin", "Auto Spin", "Free spins only (Robux ones are skipped)")
-			AddSlider(ex, "Action delay", 0.2, 3, cfg.ActionDelay, 0.1, "s", function(v) cfg.ActionDelay = v end)
-			AddText(ex, "Botões ligados a Robux, gamepass, VIP ou presentes são sempre ignorados.")
-		end
-
-		-- ---------- COMBAT ----------
-		local pc = ctx.Page("Combat", ctx.Icons.Combat)
-		do
-			local dp = pc.Section("Auto Deploy")
-			ctl.Deploy = AddToggle(dp, "Auto Deploy Army", "Clicks the deploy button", false, function(on)
-				cfg.Deploy = on
-				if on then ensureButtonTracking() end
-			end)
-			AddSlider(dp, "Deploy delay", 1, 30, cfg.DeployEvery, 0.5, "s", function(v) cfg.DeployEvery = v end)
-			AddButton(dp, "Deploy Now", function() clickNow("Deploy") end)
-			AddButton(dp, "Reset Army", function() clickNow("Reset") end)
-
-			local at = pc.Section("Auto Base Attack")
-			Refs.aStatus = AddInfo(at, "Status", "Idle")
-			Refs.aTarget = AddInfo(at, "Target", "None")
-			Refs.aCaps   = AddInfo(at, "Captures", "0")
-			ctl.Attack = AddToggle(at, "Auto Base Attack", "Goes to targets and captures them", false, function(on)
-				cfg.Attack = on
-				if on then
-					ensurePromptTracking()
-					if not fireproximityprompt then ctx.Notify("Attack", "Executor lacks fireproximityprompt", 4) end
-				end
-			end)
-			AddToggle(at, "Target: Event bases (Airdrop)", "Highest priority", true, function(on) cfg.AtkEvent = on end)
-			AddToggle(at, "Target: Camps", "Camp / outpost prompts", true, function(on) cfg.AtkCamp = on end)
-			AddToggle(at, "Target: Other territories", "Any other capture prompt", false, function(on) cfg.AtkBase = on end)
-			AddToggle(at, "Teleport to target", "Off = only captures if you are near", true, function(on) cfg.AtkTeleport = on end)
-			AddToggle(at, "Keep army deployed", "Clicks Deploy while attacking", true, function(on) cfg.KeepDeployed = on end)
-			AddSlider(at, "Hold until captured (max)", 3, 40, cfg.AtkTimeout, 1, "s", function(v) cfg.AtkTimeout = v end)
-
-			local cp = pc.Section("Auto Capture Nearby")
-			ctl.AutoCapture = AddToggle(cp, "Auto Capture", "Triggers prompts around you", false, function(on)
-				if on and not fireproximityprompt then
-					ctx.Notify("Auto Capture", "Executor lacks fireproximityprompt", 4)
-					ctl.AutoCapture.Set(false, true)
-					return
-				end
-				cfg.AutoCapture = on
-				if on then ensurePromptTracking() end
-			end)
-			AddSlider(cp, "Capture range", 5, 60, cfg.Range, 1, " st", function(v) cfg.Range = v end)
-			AddToggle(cp, "Instant Interact", "Removes hold time on prompts", false, function(on)
-				cfg.Instant = on
-				if on then
-					ensurePromptTracking()
-					for p in pairs(prompts) do applyInstant(p) end
-				else
-					restoreInstant()
-				end
-			end)
-		end
-
-		-- ---------- ESP ----------
-		local px = ctx.Page("ESP", ctx.Icons.Search)
-		do
-			local es = px.Section("ESP")
-			Refs.espPlayersMini = AddToggle(es, "Players ESP", "Highlight + name + distance", false, function(on)
-				ESP.SetEnabled("Players", on)
-				if Refs.espPlayers then Refs.espPlayers.Set(on, true) end
-			end)
-			AddToggle(es, "Merge Pairs ESP", "Glows equal units in your base (same color = pair)", false, function(on)
-				if on then ensureBase() end
-				ESP.SetEnabled("MiniPairs", on)
-			end)
-			AddToggle(es, "Targets / Events ESP", "Airdrops, camps and territories", false, function(on)
-				if on then ensurePromptTracking() end
-				ESP.SetEnabled("MiniTargets", on)
-			end)
-			AddSlider(es, "ESP max distance", 100, 2000, ESP.MaxDist, 50, "", function(v) ESP.MaxDist = v end)
-			AddText(es, "Cores: dourado = evento/airdrop, vermelho = camp, azul = território. Pares de merge brilham na mesma cor.")
-		end
-
-		-- ---------- TOOLS ----------
-		local pt = ctx.Page("Tools", ctx.Icons.Shield)
-		do
-			local cs = pt.Section("Custom Click")
-			ctl.Custom = AddToggle(cs, "Custom Auto Click", "Clicks any button with your keywords", false, function(on)
-				cfg.Custom = on
-				if on then ensureButtonTracking() end
-			end)
-			AddInput(cs, "Keywords", "ex: claim, daily", "", function(text)
-				cfg.CustomWords = splitWords(text)
-				ctx.Notify("Custom Click", #cfg.CustomWords .. " keyword(s) set", 2)
-			end)
-
-			local st = pt.Section("Status")
-			Refs.sClicks = AddInfo(st, "Buttons clicked", "0")
-			Refs.sRebirth = AddInfo(st, "Rebirth clicks", "0")
-			Refs.sButtons = AddInfo(st, "Buttons tracked", "0")
-			Refs.sPrompts = AddInfo(st, "Prompts tracked", "0")
-
-			local dev = pt.Section("Developer Tools")
-			local function dump(out, name)
-				table.sort(out)
-				local text = table.concat(out, "\n")
-				if ctx.copy then
-					ctx.copy(text)
-					ctx.Notify(name, #out .. " entries copied", 3)
-				else
-					print(text)
-					ctx.Notify(name, #out .. " entries printed in the console", 3)
-				end
-			end
-			AddButton(dev, "Scan Buttons", function()
-				ensureButtonTracking()
-				local out, now = {}, os.clock()
-				for b, info in pairs(buttons) do
-					if b.Parent then
-						refreshInfo(b, info, now)
-						table.insert(out, (isShown(b) and "[visible] " or "[hidden] ") .. b:GetFullName() .. " | " .. info.text)
-					end
-				end
-				dump(out, "Scan Buttons")
-			end)
-			AddButton(dev, "Scan My Base Units", function()
-				if not ensureBase() then return end
-				local sc = scanUnits(true)
-				local out = {}
-				for key, list in pairs(sc.groups) do
-					local pr = {}
-					for _, d in ipairs(unitPrompts(list[1])) do pr[#pr + 1] = promptTextOf(d) end
-					table.insert(out, #list .. "x | " .. key .. " | " .. list[1]:GetFullName() .. " | prompts: " .. table.concat(pr, " / "))
-				end
-				dump(out, "Base Units")
-			end)
-			AddButton(dev, "Scan Remotes", function()
-				local out = {}
-				for _, d in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
-					if d:IsA("RemoteEvent") or d:IsA("RemoteFunction") then
-						table.insert(out, d.ClassName .. ": " .. d:GetFullName())
-					end
-				end
-				dump(out, "Scan Remotes")
-			end)
-			AddButton(dev, "Reset merge cooldowns", function()
-				cooldown = setmetatable({}, {__mode = "k"})
-				failCount = setmetatable({}, {__mode = "k"})
-				scan.t = 0
-				ctx.Notify("Merge", "Cooldowns cleared", 2)
-			end)
-			AddText(dev, "Se o merge não achar pares: rode Scan My Base Units e me mande o resultado, ou preencha Unit names na aba Merge.")
-		end
-
-		-- Atualiza os contadores 1x/s, só com a aba visível
-		task.spawn(function()
-			while running and ctx.ScreenGui.Parent do
-				task.wait(1)
-				if ctx.IsVisible() then
-					local baseText = base.center and base.label or "Not set"
-					Refs.mUnits.Text = tostring(scan.units)
-					Refs.mPairs.Text = tostring(scan.pairs)
-					Refs.mMerges.Text = tostring(stats.merges)
-					Refs.mFails.Text = tostring(stats.fails)
-					Refs.mBase.Text = baseText
-					Refs.qBase.Text = baseText
-					Refs.qPairs.Text = tostring(scan.pairs)
-					Refs.qMerges.Text = tostring(stats.merges)
-					Refs.qClicks.Text = tostring(stats.clicks)
-					Refs.qGhost.Text = ghost.active and (carry and "Carrying unit" or "Working") or "Standby"
-					Refs.aStatus.Text = atk.status
-					Refs.aTarget.Text = atk.target
-					Refs.aCaps.Text = tostring(stats.captures)
-					Refs.sClicks.Text = tostring(stats.clicks)
-					Refs.sRebirth.Text = tostring(stats.rebirths)
-					local bc, pc2 = 0, 0
-					for _ in pairs(buttons) do bc = bc + 1 end
-					for _ in pairs(prompts) do pc2 = pc2 + 1 end
-					Refs.sButtons.Text = tostring(bc)
-					Refs.sPrompts.Text = tostring(pc2)
-				end
-			end
-		end)
-
-		ctx.OnUnload(function()
-			running = false
-			recording = false
-			mergeOnce = false
-			env.__ShadowHookFn = nil
-			for _, k in ipairs(DUE_KEYS) do cfg[k] = false end
-			cfg.Merge, cfg.Attack, cfg.AutoCapture = false, false, false
-			ghostStop()
-			stopWalk()
-			restoreInstant()
-		end)
-	end,
-})
-
--- ================================================================= --
--- 13. JOGO: BLOX FRUITS
---  Sub-abas: Farm | Stats | Items | Misc
---  Remotes, quests e nomes de mobs seguem a Primeira Sea e podem mudar
---  quando o jogo atualiza. Confira com "Scan enemies" e "Scan remotes".
--- ================================================================= --
-RegisterGame({
-	Name = "Blox Fruits",
-	TabName = "Blox Fruits",
-	Icon = ICONS.Combat,
-	PlaceIds = {2753915549, 4442272183, 7449423635},
-	GameIds = {},
-	Names = {"Blox Fruits"},
-	Detect = function()
-		return game:GetService("ReplicatedStorage"):FindFirstChild("CommF_", true) ~= nil
-	end,
-	Build = function(ctx)
-		-- 1) ESTADO E CONFIGURAÇÃO
-		local running = true
-		local status = "Idle"
-		local kills = 0
-		local counted = setmetatable({}, {__mode = "k"})
-		local tried = setmetatable({}, {__mode = "k"})
-		local lastNote = {}
-		local lastAccept, acceptFails = 0, 0
-		local lastAttack, lastBuso, lastEquip = 0, 0, 0
-		local spot = nil
-		local target, targetPart = nil, nil
-		local pickups = {}
-		local cfg = {
-			Farm = false, Manual = false, QuestName = "", QuestLvl = 1, MobName = "",
-			Weapon = "Melee", Speed = 200, Height = 6, Behind = 3,
-			AutoStats = false, Stat = "Melee", PerTick = 1, StatEvery = 1,
-			Chests = false, Fruits = false, ESPChests = false, ESPFruits = false,
-			Haki = false,
-		}
-		local STAT_NAMES = {"Melee", "Defense", "Sword", "Gun", "Demon Fruit", "Blox Fruit"}
-		local WEAPONS = {"Melee", "Sword", "Gun", "Blox Fruit"}
-
-		local QUESTS = {
-			{min = 1,   max = 13,    quest = "BanditQuest1",  qlvl = 1, mob = "Bandit"},
-			{min = 14,  max = 19,    quest = "JungleQuest",   qlvl = 1, mob = "Monkey"},
-			{min = 20,  max = 29,    quest = "JungleQuest",   qlvl = 2, mob = "Gorilla"},
-			{min = 30,  max = 39,    quest = "BuggyQuest1",   qlvl = 1, mob = "Pirate"},
-			{min = 40,  max = 59,    quest = "BuggyQuest1",   qlvl = 2, mob = "Brute"},
-			{min = 60,  max = 74,    quest = "DesertQuest",   qlvl = 1, mob = "Desert Bandit"},
-			{min = 75,  max = 89,    quest = "DesertQuest",   qlvl = 2, mob = "Desert Officer"},
-			{min = 90,  max = 99,    quest = "SnowQuest",     qlvl = 1, mob = "Snow Bandit"},
-			{min = 100, max = 119,   quest = "SnowQuest",     qlvl = 2, mob = "Snowman"},
-			{min = 120, max = 149,   quest = "MarineQuest2",  qlvl = 1, mob = "Chief Petty Officer"},
-			{min = 150, max = 174,   quest = "SkyQuest",      qlvl = 1, mob = "Sky Bandit"},
-			{min = 175, max = 189,   quest = "SkyQuest",      qlvl = 2, mob = "Dark Master"},
-			{min = 190, max = 209,   quest = "PrisonerQuest", qlvl = 1, mob = "Prisoner"},
-			{min = 210, max = 249,   quest = "PrisonerQuest", qlvl = 2, mob = "Dangerous Prisoner"},
-			{min = 250, max = 274,   quest = "ColosseumQuest", qlvl = 1, mob = "Toga Warrior"},
-			{min = 275, max = 99999, quest = "ColosseumQuest", qlvl = 2, mob = "Gladiator"},
-		}
-
-		-- 2) UTILITÁRIOS
-		local function cleanKey(s)
-			local t = string.gsub(tostring(s or ""), "%b[]", "")
-			return (string.gsub(string.lower(t), "[^%w]", ""))
-		end
-
-		local function trim(s)
-			return (string.gsub(tostring(s or ""), "^%s*(.-)%s*$", "%1"))
-		end
-
-		local function matchFrom(list, text)
-			local k = cleanKey(text)
-			if k == "" then return nil end
-			for _, v in ipairs(list) do
-				if cleanKey(v) == k then return v end
-			end
-			return nil
-		end
-
-		local function matchWeapon(text)
-			if cleanKey(text) == "fruit" then return "Blox Fruit" end
-			return matchFrom(WEAPONS, text)
-		end
-
-		local function note(msg, force)
-			local now = os.clock()
-			if not force and lastNote[msg] and now - lastNote[msg] < 6 then return end
-			lastNote[msg] = now
-			Notify("Blox Fruits", msg, 2.5, true)
-		end
-
-		local function dataValue(name)
-			local d = LocalPlayer:FindFirstChild("Data")
-			local v = d and d:FindFirstChild(name)
-			if v and v:IsA("ValueBase") and typeof(v.Value) == "number" then return v.Value end
-			return nil
-		end
-
-		local function dump(title, lines)
-			local text = title .. "\n" .. table.concat(lines, "\n")
-			print("[Blox Fruits] " .. title)
-			print(text)
-			if ctx.copy then pcall(ctx.copy, text) end
-			Notify("Blox Fruits", title .. " (" .. #lines .. " linhas) - copiado / F9", 4)
-		end
-
-		-- 3) REMOTE (CommF_) COM TEMPO LIMITE
-		local commF = nil
-		local function getRemote()
-			if commF and commF.Parent then return commF end
-			commF = game:GetService("ReplicatedStorage"):FindFirstChild("CommF_", true)
-			if commF and not commF:IsA("RemoteFunction") then commF = nil end
-			return commF
-		end
-
-		local function invoke(timeout, ...)
-			local rf = getRemote()
-			if not rf then return false, "CommF_ not found" end
-			local args = table.pack(...)
-			local done, ok, res = false, false, nil
-			task.spawn(function()
-				ok, res = pcall(rf.InvokeServer, rf, table.unpack(args, 1, args.n))
-				done = true
-			end)
-			local t0 = os.clock()
-			while not done and running and os.clock() - t0 < (timeout or 5) do
-				task.wait(0.05)
-			end
-			if not done then return false, "timeout" end
-			return ok, res
-		end
-
-		local function hasBuso()
-			local c = LocalPlayer.Character
-			if not c then return false end
-			if c:GetAttribute("HasBuso") == true then return true end
-			local v = c:FindFirstChild("HasBuso")
-			return v ~= nil and (not v:IsA("BoolValue") or v.Value)
-		end
-
-		-- 4) MOVIMENTO
-		local function lookCF(pos, to)
-			local d = to - pos
-			if Vector3.new(d.X, 0, d.Z).Magnitude < 0.5 then
-				to = pos + Vector3.new(0, 0, -1)
-			end
-			return CFrame.lookAt(pos, to)
-		end
-
-		local function moveToward(goal, look, dt)
-			local root = getRoot()
-			if not root then return end
-			local cur = root.Position
-			local delta = goal - cur
-			local dist = delta.Magnitude
-			local step = cfg.Speed * dt
-			local newPos = goal
-			if dist > step then newPos = cur + delta.Unit * step end
-			root.CFrame = lookCF(newPos, look or goal)
-			root.AssemblyLinearVelocity = Vector3.zero
-		end
-
-		-- 5) QUEST, MOBS E ARMAS
-		local function currentQuest()
-			if cfg.Manual then
-				if cfg.QuestName == "" then return nil end
-				return {quest = cfg.QuestName, qlvl = cfg.QuestLvl, mob = cfg.MobName}
-			end
-			local lvl = dataValue("Level")
-			if not lvl then return nil end
-			for _, q in ipairs(QUESTS) do
-				if lvl >= q.min and lvl <= q.max then return q end
-			end
-			return nil
-		end
-
-		local function questGui()
-			local pg = LocalPlayer:FindFirstChild("PlayerGui")
-			local main = pg and pg:FindFirstChild("Main")
-			local q = main and main:FindFirstChild("Quest")
-			if q and q:IsA("GuiObject") then return q end
-			return nil
-		end
-
-		local function questVisible()
-			local q = questGui()
-			return q ~= nil and q.Visible
-		end
-
-		local function questText()
-			local q = questGui()
-			if not q or not q.Visible then return nil end
-			local out = {}
-			for _, d in ipairs(q:GetDescendants()) do
-				if d:IsA("TextLabel") and d.Visible and d.Text ~= "" then
-					out[#out + 1] = d.Text
-					if #out >= 3 then break end
-				end
-			end
-			if #out == 0 then return "Quest window open (no text found)" end
-			return table.concat(out, " | ")
-		end
-
-		local function acceptQuest(q, now)
-			lastAccept = now
-			task.spawn(function()
-				local ok, res = invoke(6, "StartQuest", q.quest, q.qlvl)
-				if not ok then note("Quest request failed: " .. tostring(res)) end
-			end)
-		end
-
-		local function findEnemy(mob)
-			local root = getRoot()
-			if not root then return nil, nil end
-			local want = (mob and mob ~= "") and cleanKey(mob) or nil
-			local folder = workspace:FindFirstChild("Enemies")
-			local pool = folder and folder:GetChildren() or workspace:GetChildren()
-			local best, bestPart, bestD = nil, nil, math.huge
-			for _, m in ipairs(pool) do
-				if m:IsA("Model") and not Players:GetPlayerFromCharacter(m) and (not want or cleanKey(m.Name) == want) then
-					local h = m:FindFirstChildOfClass("Humanoid")
-					local p = m:FindFirstChild("HumanoidRootPart")
-					if h and p and h.Health > 0 then
-						local d = (p.Position - root.Position).Magnitude
-						if d < bestD then best, bestPart, bestD = m, p, d end
-					end
-				end
-			end
-			return best, bestPart
-		end
-
-		local function equipWeapon(now)
-			local hum, char = getHum(), LocalPlayer.Character
-			if not hum or not char then return nil end
-			local equipped = char:FindFirstChildOfClass("Tool")
-			if equipped and equipped.ToolTip == cfg.Weapon then return equipped end
-			if now - lastEquip < 0.5 then return equipped end
-			lastEquip = now
-			local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
-			local containers = {char}
-			if bp then table.insert(containers, bp) end
-			local found = nil
-			for _, container in ipairs(containers) do
-				for _, t in ipairs(container:GetChildren()) do
-					if t:IsA("Tool") and t.ToolTip == cfg.Weapon then
-						found = t
-						break
-					end
-				end
-				if found then break end
-			end
-			if not found then
-				if equipped then return equipped end
-				found = bp and bp:FindFirstChildOfClass("Tool") or nil
-				if not found then return nil end
-				note("No " .. cfg.Weapon .. " tool found, using " .. found.Name)
-			end
-			if found.Parent ~= char then
-				pcall(function() hum:EquipTool(found) end)
-			end
-			return found
-		end
-
-		-- 6) ITENS DO MAPA (baús e frutas)
-		local function kindOf(inst)
-			local n = string.lower(inst.Name)
-			if string.find(n, "chest", 1, true) then return "Chest" end
-			if inst:IsA("Tool") and (inst.ToolTip == "Blox Fruit" or string.find(n, "fruit", 1, true)) then
-				return "Fruit"
-			end
-			return nil
-		end
-
-		local function partOf(inst)
-			if inst:IsA("BasePart") then return inst end
-			if inst:IsA("Tool") then
-				local h = inst:FindFirstChild("Handle")
-				return (h and h:IsA("BasePart")) and h or nil
-			end
-			if inst:IsA("Model") then
-				return inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart", true)
-			end
-			return nil
-		end
-
-		local function scanPickups()
-			local list = {}
-			local function consider(inst)
-				if inst:IsA("Model") and Players:GetPlayerFromCharacter(inst) then return end
-				local kind = kindOf(inst)
-				if not kind then return end
-				local part = partOf(inst)
-				if part then list[#list + 1] = {part = part, kind = kind, inst = inst} end
-			end
-			for _, c in ipairs(workspace:GetChildren()) do
-				consider(c)
-				if c:IsA("Folder") then
-					for _, g in ipairs(c:GetChildren()) do consider(g) end
-				end
-			end
-			pickups = list
-		end
-
-		local function nextPickup(now)
-			local root = getRoot()
-			if not root then return nil end
-			local best, bestD = nil, math.huge
-			for _, p in ipairs(pickups) do
-				local part = p.part
-				local wanted = (p.kind == "Chest" and cfg.Chests) or (p.kind == "Fruit" and cfg.Fruits)
-				if wanted and part and part.Parent and part:IsDescendantOf(workspace) then
-					local t = tried[part]
-					if not t or now >= t.nextAt then
-						local d = (part.Position - root.Position).Magnitude
-						if d < bestD then best, bestD = p, d end
-					end
-				end
-			end
-			return best
-		end
-
-		local function touchPart(root, part, now)
-			local t = tried[part] or {n = 0, nextAt = 0}
-			t.n = t.n + 1
-			t.nextAt = now + (t.n >= 6 and 120 or 5)
-			tried[part] = t
-			if typeof(firetouchinterest) == "function" then
-				pcall(firetouchinterest, root, part, 0)
-				task.delay(0.1, function()
-					pcall(firetouchinterest, root, part, 1)
-				end)
+		-- validade do alvo / detecção de kill
+		local tgt = Aim.target
+		if tgt then
+			if not tgt.Parent then
+				Aim.target = nil
 			else
-				root.CFrame = part.CFrame
+				local h = tgt:FindFirstChildOfClass("Humanoid")
+				if h and h.Health <= 0 then
+					if Aim.lockedTarget == tgt then
+						Aim.kills = Aim.kills + 1
+						if Cfg.KillFx and Aim.lastScreen then killBurst(fx, Aim.lastScreen) end
+						if Cfg.LockSound then Sfx.Play("Notify") end
+					end
+					Aim.target = nil
+				end
 			end
 		end
 
-		local function pickupTick(p, now, dt)
-			local root = getRoot()
-			local part = p.part
-			if not root or not part then return end
-			if (part.Position - root.Position).Magnitude <= 7 then
-				touchPart(root, part, now)
-			else
-				moveToward(part.Position + Vector3.new(0, 2, 0), part.Position, dt)
-			end
-		end
+		local myHum = getHum()
+		local meAlive = myHum == nil or myHum.Health > 0
+		local held = (not paused) and (Cfg.KeyMode == 3 or Aim.holding or Aim.touchHeld)
 
-		-- 7) CÉREBRO DO FARM
-		local function farmTick(now, dt)
-			local q = currentQuest()
-			if not q then
-				status = "No quest for your level"
-				note("No quest for your level. Turn on Manual quest.")
-				return false
+		-- escolha do alvo (sticky: mantém o atual enquanto ainda estiver perto da mira)
+		local part, scr, d3
+		if meAlive and not paused then
+			if Cfg.Sticky and Aim.target then
+				part, scr, d3 = evaluate(Aim.target, center, Cfg.FOV * 1.3)
 			end
-
-			if questVisible() then
-				acceptFails = 0
-			elseif now - lastAccept >= 6 then
-				if lastAccept > 0 then acceptFails = acceptFails + 1 end
-				if acceptFails >= 3 then note("Quest is not starting. Stand next to the quest NPC.") end
-				acceptQuest(q, now)
-			end
-
-			local thum = target and target:FindFirstChildOfClass("Humanoid")
-			if target and thum and thum.Health <= 0 and not counted[target] then
-				counted[target] = true
-				kills = kills + 1
-			end
-			if not (target and target.Parent and thum and thum.Health > 0 and targetPart and targetPart.Parent) then
-				target, targetPart = findEnemy(q.mob)
-			end
-			if not target or not targetPart then
-				status = "Searching " .. ((q.mob and q.mob ~= "") and q.mob or "enemy")
-				return false
-			end
-
-			local root = getRoot()
-			if not root then return false end
-			local tp = targetPart.Position
-			status = "Farming " .. target.Name
-			local aim = tp + Vector3.new(0, cfg.Height, 0) - targetPart.CFrame.LookVector * cfg.Behind
-			moveToward(aim, tp, dt)
-			if (root.Position - tp).Magnitude <= 25 then
-				local tool = equipWeapon(now)
-				if tool and tool.Parent == LocalPlayer.Character and now - lastAttack >= 0.12 then
-					lastAttack = now
-					pcall(tool.Activate, tool)
-				end
-			end
-			return true
-		end
-
-		local function brainTick(now, dt)
-			local hum, root = getHum(), getRoot()
-			if not hum or not root or hum.Health <= 0 then
-				status = "Waiting for respawn"
-				return
-			end
-			if cfg.Farm and farmTick(now, dt) then return end
-			if cfg.Chests or cfg.Fruits then
-				local p = nextPickup(now)
-				if p then
-					status = "Collecting " .. (p.kind == "Chest" and "chest" or "fruit")
-					pickupTick(p, now, dt)
-					return
-				end
-			end
-			if cfg.Farm and spot then
-				status = "Waiting at farm spot"
-				moveToward(spot, nil, dt)
-				return
-			end
-			if not cfg.Farm then status = "Idle" end
-		end
-
-		-- 8) ESP DOS ITENS
-		ESP.Register("BFChests", function()
-			local out = {}
-			for _, p in ipairs(pickups) do
-				if p.kind == "Chest" and p.part.Parent then
-					out[#out + 1] = {part = p.part, hl = p.inst:IsA("Model") and p.inst or nil,
-						text = "CHEST", color = Color3.fromRGB(255, 200, 60)}
-				end
-			end
-			return out
-		end)
-
-		ESP.Register("BFFruits", function()
-			local out = {}
-			for _, p in ipairs(pickups) do
-				if p.kind == "Fruit" and p.part.Parent then
-					out[#out + 1] = {part = p.part, hl = p.inst:IsA("Model") and p.inst or nil,
-						text = "FRUIT", color = Color3.fromRGB(150, 110, 255)}
-				end
-			end
-			return out
-		end)
-
-		-- 9) INTERFACE
-		local togs = {}
-		local vals = {}
-
-		local function applyESP()
-			ESP.SetEnabled("BFChests", cfg.ESPChests)
-			ESP.SetEnabled("BFFruits", cfg.ESPFruits)
-		end
-
-		local function stopAll()
-			for key, c in pairs(togs) do
-				c.Set(false, true)
-				cfg[key] = false
-			end
-			applyESP()
-			target, targetPart = nil, nil
-			note("Everything stopped", true)
-		end
-
-		local function scanEnemies()
-			local folder = workspace:FindFirstChild("Enemies")
-			if not folder then
-				Notify("Blox Fruits", "workspace.Enemies not found", 4)
-				return
-			end
-			local counts, order = {}, {}
-			for _, m in ipairs(folder:GetChildren()) do
-				local name = m.Name
-				if not counts[name] then
-					counts[name] = 0
-					order[#order + 1] = name
-				end
-				counts[name] = counts[name] + 1
-			end
-			table.sort(order)
-			local lines = {}
-			for _, name in ipairs(order) do
-				lines[#lines + 1] = name .. " x" .. counts[name]
-			end
-			dump("Enemies (workspace.Enemies)", lines)
-		end
-
-		local function scanRemotes()
-			local lines = {}
-			for _, d in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
-				if d:IsA("RemoteFunction") or d:IsA("RemoteEvent") then
-					lines[#lines + 1] = d.ClassName .. "  " .. d:GetFullName()
-					if #lines >= 400 then break end
-				end
-			end
-			dump("Remotes (ReplicatedStorage)", lines)
-		end
-
-		-- FARM
-		local pFarm = ctx.Page("Farm", ctx.Icons.Combat)
-		do
-			local sec = pFarm.Section("Auto Farm")
-			togs.Farm = AddToggle(sec, "Auto Farm", "Takes the quest for your level and kills the mob", false, function(on)
-				cfg.Farm = on
-				target, targetPart = nil, nil
-				lastAccept, acceptFails = 0, 0
-			end)
-			togs.Manual = AddToggle(sec, "Manual quest", "Use the quest name, level and mob below", false, function(on)
-				cfg.Manual = on
-				target, targetPart = nil, nil
-			end)
-			AddInput(sec, "Quest name", "e.g. BanditQuest1", "", function(text)
-				cfg.QuestName = trim(text)
-				target, targetPart = nil, nil
-			end)
-			AddInput(sec, "Quest level", "e.g. 1", "1", function(text)
-				cfg.QuestLvl = math.max(1, math.floor(tonumber(text) or 1))
-			end)
-			AddInput(sec, "Mob name", "empty = nearest enemy", "", function(text)
-				cfg.MobName = trim(text)
-				target, targetPart = nil, nil
-			end)
-			AddInput(sec, "Weapon", "Melee / Sword / Gun / Blox Fruit", cfg.Weapon, function(text)
-				local w = matchWeapon(text)
-				if w then
-					cfg.Weapon = w
-					note("Weapon: " .. w, true)
-				else
-					note("Unknown weapon. Use Melee, Sword, Gun or Blox Fruit.", true)
-				end
-			end)
-
-			local sm = pFarm.Section("Movement")
-			AddSlider(sm, "Walk speed", 50, 400, cfg.Speed, 10, " st/s", function(v) cfg.Speed = v end)
-			AddSlider(sm, "Height above mob", 2, 20, cfg.Height, 1, " st", function(v) cfg.Height = v end)
-			AddSlider(sm, "Behind mob", 0, 10, cfg.Behind, 1, " st", function(v) cfg.Behind = v end)
-
-			local sp = pFarm.Section("Farm spot")
-			AddButton(sp, "Save farm spot (here)", function()
-				local root = getRoot()
-				if not root then
-					note("Character not ready", true)
-					return
-				end
-				spot = root.Position
-				note("Farm spot saved", true)
-			end)
-			AddButton(sp, "Clear farm spot", function()
-				spot = nil
-				note("Farm spot cleared", true)
-			end)
-
-			local ss = pFarm.Section("Status")
-			vals.Quest = AddInfo(ss, "Quest", "-")
-			vals.Target = AddInfo(ss, "Target", "-")
-			vals.Kills = AddInfo(ss, "Kills", "0")
-			vals.Level = AddInfo(ss, "Level", "-")
-			vals.Status = AddInfo(ss, "Status", "Idle")
-			vals.Spot = AddInfo(ss, "Farm spot", "Not set")
-			AddText(ss, "Stand next to the quest NPC once before turning on Auto Farm, so the quest can start. Manual quest works for other Seas.")
-		end
-
-		-- STATS
-		local pStats = ctx.Page("Stats", ctx.Icons.Bolt)
-		do
-			local sec = pStats.Section("Auto Stats")
-			togs.AutoStats = AddToggle(sec, "Auto Stats", "Spends your points on the stat below", false, function(on)
-				cfg.AutoStats = on
-			end)
-			AddInput(sec, "Stat", "Melee / Defense / Sword / Gun / Demon Fruit / Blox Fruit", cfg.Stat, function(text)
-				local s = matchFrom(STAT_NAMES, text)
-				if s then
-					cfg.Stat = s
-					note("Stat: " .. s, true)
-				else
-					note("Unknown stat. Check the list in the placeholder.", true)
-				end
-			end)
-			AddSlider(sec, "Points per tick", 1, 10, cfg.PerTick, 1, "", function(v) cfg.PerTick = v end)
-			AddSlider(sec, "Interval", 0.2, 5, cfg.StatEvery, 0.1, " s", function(v) cfg.StatEvery = v end)
-			AddButton(sec, "Add 1 point now", function()
-				task.spawn(function()
-					local ok = invoke(5, "AddPoint", cfg.Stat, 1)
-					note(ok and ("+1 " .. cfg.Stat) or "AddPoint request failed", true)
+			if not part then
+				local bestChar, bestPart, bestScr, bestName, bestD
+				eachEnemy(function(char, name)
+					local p2, s2, dd = evaluate(char, center, Cfg.FOV)
+					if p2 and (not bestScr or s2 < bestScr) then
+						bestChar, bestPart, bestScr, bestName, bestD = char, p2, s2, name, dd
+					end
 				end)
-			end)
-			vals.Points = AddInfo(sec, "Points", "-")
-			vals.TargetStat = AddInfo(sec, "Target stat", cfg.Stat)
-		end
-
-		-- ITEMS
-		local pItems = ctx.Page("Items", ctx.Icons.Economy)
-		do
-			local sec = pItems.Section("Auto collect")
-			togs.Chests = AddToggle(sec, "Collect chests", "Walks to chests on the map and opens them", false, function(on)
-				cfg.Chests = on
-			end)
-			togs.Fruits = AddToggle(sec, "Collect fruits", "Walks to dropped fruits and picks them up", false, function(on)
-				cfg.Fruits = on
-			end)
-
-			local se = pItems.Section("ESP")
-			togs.ESPChests = AddToggle(se, "Chest ESP", "Highlights chests", false, function(on)
-				cfg.ESPChests = on
-				ESP.SetEnabled("BFChests", on)
-			end)
-			togs.ESPFruits = AddToggle(se, "Fruit ESP", "Highlights dropped fruits", false, function(on)
-				cfg.ESPFruits = on
-				ESP.SetEnabled("BFFruits", on)
-			end)
-
-			local sc = pItems.Section("Nearby")
-			vals.Chests = AddInfo(sc, "Chests found", "0")
-			vals.Fruits = AddInfo(sc, "Fruits found", "0")
-		end
-
-		-- MISC
-		local pMisc = ctx.Page("Misc", ctx.Icons.Settings)
-		do
-			local sh = pMisc.Section("Haki")
-			togs.Haki = AddToggle(sh, "Auto Armament Haki", "Turns Buso back on after you respawn", false, function(on)
-				cfg.Haki = on
-			end)
-
-			local st = pMisc.Section("Tools")
-			AddButton(st, "Show current quest", function()
-				Notify("Current quest", questText() or "No quest window open", 5)
-			end)
-			AddButton(st, "Scan enemies", scanEnemies)
-			AddButton(st, "Scan remotes", scanRemotes)
-			AddButton(st, "Stop everything", stopAll, true)
-		end
-
-		-- 10) LOOPS EM SEGUNDO PLANO
-		task.spawn(function()
-			local last = os.clock()
-			local lastErr = 0
-			while running and ctx.ScreenGui.Parent do
-				local now = os.clock()
-				local dt = math.clamp(now - last, 0.01, 0.2)
-				last = now
-				local ok, err = pcall(brainTick, now, dt)
-				if not ok and now - lastErr > 5 then
-					lastErr = now
-					warn("[ShadowHub] Blox Fruits: " .. tostring(err))
+				if bestChar then
+					if Aim.target ~= bestChar then Aim.name = bestName end
+					Aim.target, part, scr, d3 = bestChar, bestPart, bestScr, bestD
+				else
+					Aim.target = nil
 				end
-				task.wait(0.03)
-			end
-		end)
-
-		task.spawn(function()
-			while running and ctx.ScreenGui.Parent do
-				pcall(scanPickups)
-				task.wait(2.5)
-			end
-		end)
-
-		task.spawn(function()
-			while running and ctx.ScreenGui.Parent do
-				local wait = 0.5
-				if cfg.AutoStats then
-					local pts = dataValue("Points")
-					if pts and pts > 0 then
-						local okAll = true
-						for _ = 1, math.min(pts, cfg.PerTick) do
-							local ok = invoke(5, "AddPoint", cfg.Stat, 1)
-							if not ok then
-								okAll = false
-								break
-							end
-						end
-						if not okAll then note("AddPoint request failed") end
-					end
-					wait = cfg.StatEvery
-				end
-				task.wait(wait)
-			end
-		end)
-
-		task.spawn(function()
-			while running and ctx.ScreenGui.Parent do
-				if cfg.Haki and getRoot() and not hasBuso() and os.clock() - lastBuso >= 10 then
-					lastBuso = os.clock()
-					local ok = invoke(5, "Buso")
-					if not ok then note("Haki request failed") end
-				end
-				task.wait(1.5)
-			end
-		end)
-
-		task.spawn(function()
-			while running and ctx.ScreenGui.Parent do
-				pcall(function()
-					local q = currentQuest()
-					vals.Quest.Text = q and (q.quest .. " (Lv " .. tostring(q.qlvl) .. ")") or "None for your level"
-					vals.Target.Text = (target and target.Name) or "-"
-					vals.Kills.Text = tostring(kills)
-					vals.Level.Text = tostring(dataValue("Level") or "-")
-					vals.Points.Text = tostring(dataValue("Points") or "-")
-					vals.TargetStat.Text = cfg.Stat
-					vals.Status.Text = status
-					vals.Spot.Text = spot and "Saved" or "Not set"
-					local nc, nf = 0, 0
-					for _, p in ipairs(pickups) do
-						if p.kind == "Chest" then nc = nc + 1 else nf = nf + 1 end
-					end
-					vals.Chests.Text = tostring(nc)
-					vals.Fruits.Text = tostring(nf)
-				end)
-				task.wait(0.5)
-			end
-		end)
-
-		-- 11) DESCARREGAR
-		ctx.OnUnload(function()
-			running = false
-			for key in pairs(togs) do cfg[key] = false end
-			ESP.SetEnabled("BFChests", false)
-			ESP.SetEnabled("BFFruits", false)
-			target, targetPart = nil, nil
-		end)
-	end,
-})
-
--- Detecção do jogo atual (só carrega o script se ESTE for o jogo dele).
-task.spawn(function()
-	-- 1) PlaceId / GameId
-	for _, def in ipairs(GameModules) do
-		if matchesGame(def, nil) then loadGame(def) end
-	end
-
-	-- 2) Nome vindo do Roblox
-	local gameName
-	for _ = 1, 4 do
-		local ok, info = pcall(function() return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId) end)
-		if ok and info and info.Name then gameName = info.Name break end
-		task.wait(1.5)
-	end
-	if not ScreenGui.Parent then return end
-	Refs.gameName.Text = gameName or game.Name or "Unknown"
-	for _, def in ipairs(GameModules) do
-		if matchesGame(def, gameName) then loadGame(def) end
-	end
-
-	-- 3) Plano B: conteúdo do jogo, tenta por ~1 minuto
-	for _ = 1, 12 do
-		if not ScreenGui.Parent then return end
-		local pending = false
-		for _, def in ipairs(GameModules) do
-			if def.Detect and not loadedGames[def.Name] then
-				pending = true
-				local ok, found = pcall(def.Detect)
-				if ok and found then loadGame(def) end
-			end
-		end
-		if not pending then break end
-		task.wait(5)
-	end
-
-	if next(loadedGames) == nil and ScreenGui.Parent then
-		Refs.gameScript.Text = "None for this game"
-	end
-end)
-
--- ================================================================= --
--- 14. LOOPS, ABRIR/FECHAR, ARRASTE, UNLOAD E INICIALIZAÇÃO
--- ================================================================= --
-do
-	-- Pulo infinito
-	track(UserInputService.JumpRequest:Connect(function()
-		if State.InfJump then
-			local hum = getHum()
-			if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
-		end
-	end))
-
-	-- Noclip com lista em cache
-	track(RunService.Stepped:Connect(function()
-		if not State.Noclip then return end
-		local now = os.clock()
-		if now - Mv.refresh > 1.5 then
-			Mv.refresh = now
-			Mv.rebuildNoclip()
-		end
-		local parts = Mv.parts
-		for i = 1, #parts do
-			local p = parts[i]
-			if p.CanCollide then
-				Mv.touched[p] = true
-				p.CanCollide = false
-			end
-		end
-	end))
-
-	-- Heartbeat: velocidade, pulo, fly, iluminação
-	track(RunService.Heartbeat:Connect(function(dt)
-		if State.SpeedOn or State.JumpOn then
-			local hum = getHum()
-			if hum then
-				if State.SpeedOn then
-					if Original.Speed == nil then Original.Speed = hum.WalkSpeed end
-					if hum.WalkSpeed ~= State.Speed then hum.WalkSpeed = State.Speed end
-				end
-				if State.JumpOn then
-					if Original.Jump == nil then
-						Original.JumpIsPower = hum.UseJumpPower
-						Original.Jump = hum.UseJumpPower and hum.JumpPower or hum.JumpHeight
-					end
-					if hum.UseJumpPower then
-						if hum.JumpPower ~= State.Jump then hum.JumpPower = State.Jump end
-					else
-						local target = (State.Jump * State.Jump) / (2 * workspace.Gravity)
-						if hum.JumpHeight ~= target then hum.JumpHeight = target end
-					end
-				end
-			end
-		end
-
-		if State.Fly then
-			local fl = Mv.fly
-			if fl and fl.bv and fl.bv.Parent then
-				local cam = workspace.CurrentCamera
-				local root = getRoot()
-				if cam and root then
-					local mv = Mv.moveVector()
-					local dir = cam.CFrame.RightVector * mv.X - cam.CFrame.LookVector * mv.Z
-					if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.yAxis end
-					if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
-						dir = dir - Vector3.yAxis
-					end
-					if dir.Magnitude > 1 then dir = dir.Unit end
-					Mv.vel = Mv.vel:Lerp(dir * State.FlySpeed, 1 - math.exp(-12 * dt))
-					fl.bv.Velocity = Mv.vel
-					local flat = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
-					if flat.Magnitude > 0.01 then fl.bg.CFrame = CFrame.lookAt(root.Position, root.Position + flat) end
-				end
-			elseif not fl then
-				Mv.startFly()
-			end
-		end
-
-		if State.Fullbright and Vis.fb then
-			if Lighting.Brightness ~= 2 then Lighting.Brightness = 2 end
-			if Lighting.ClockTime ~= 14 then Lighting.ClockTime = 14 end
-			if Lighting.GlobalShadows then Lighting.GlobalShadows = false end
-			local amb = Color3.fromRGB(178, 178, 178)
-			if Lighting.Ambient ~= amb then Lighting.Ambient = amb end
-			if Lighting.OutdoorAmbient ~= amb then Lighting.OutdoorAmbient = amb end
-		end
-		if State.NoFog and Vis.fog then
-			if Lighting.FogStart ~= 1e6 then Lighting.FogStart = 1e6 end
-			if Lighting.FogEnd ~= 1e6 then Lighting.FogEnd = 1e6 end
-			for atm in pairs(Vis.fog.Atmos) do
-				if atm.Parent and atm.Density ~= 0 then atm.Density = 0 end
-			end
-		end
-	end))
-
-	-- RenderStepped: FOV, estrelas, FPS, Performance Guard e estatísticas
-	local frames, lastStat, starAcc = 0, os.clock(), 0
-	track(RunService.RenderStepped:Connect(function(dt)
-		if State.FovOn then
-			local cam = workspace.CurrentCamera
-			if cam and cam.FieldOfView ~= State.Fov then cam.FieldOfView = State.Fov end
-		end
-
-		if isOpen and State.Stars and not Perf.Lite then
-			starAcc = starAcc + dt
-			if starAcc >= 1 / 24 then
-				updateStars(starAcc)
-				starAcc = 0
 			end
 		else
-			starAcc = 0
+			Aim.target = nil
+		end
+		Aim.part, Aim.dist = part, d3 or 0
+
+		-- estado: idle / preview / locked
+		local state = (not Aim.target) and "idle" or (held and "locked" or "preview")
+		local col = (state == "locked") and LOCK_COLOR or (Cfg.Rainbow and Color3.fromHSV(Aim.hue, 0.65, 1) or COLORS.Cyan)
+		fx.fovStroke.Color = col
+		fx.glowStroke.Color = col
+		fx.retStroke.Color = col
+		fx.hudStroke.Color = col
+		for _, f in ipairs(fx.tintFrames) do f.BackgroundColor3 = col end
+
+		-- efeito ao travar em um novo alvo
+		if held and Aim.target then
+			if Aim.lockedTarget ~= Aim.target then
+				Aim.lockedTarget = Aim.target
+				Aim.locks = Aim.locks + 1
+				if Cfg.LockSound then Sfx.Play("On") end
+				if Aim.lastScreen then pulseAt(fx, Aim.lastScreen, LOCK_COLOR) end
+				fx.ret.Size = UDim2.fromOffset(92, 92)
+				tween(fx.ret, 0.28, {Size = UDim2.fromOffset(54, 54)}, Enum.EasingStyle.Back)
+			end
+		else
+			Aim.lockedTarget = nil
 		end
 
-		frames = frames + 1
-		local now = os.clock()
-		if now - lastStat >= 1 then
-			guardTick(frames)
-			if isOpen then
-				Refs.fps.Text = tostring(frames)
-				Refs.perfFps.Text = tostring(frames)
-				Refs.perfState.Text = Perf.Status
-				local elapsed = os.time() - startTime
-				if elapsed >= 3600 then
-					Refs.session.Text = string.format("%dh %02dm", math.floor(elapsed / 3600), math.floor((elapsed % 3600) / 60))
+		-- texto da pílula
+		local hudText
+		if state == "locked" then hudText = "AIMBOT  ·  LOCKED  ·  " .. Aim.name
+		elseif state == "preview" then hudText = "AIMBOT  ·  TARGET  ·  " .. Aim.name
+		else hudText = "AIMBOT  ·  SCANNING" end
+		if hudText ~= Aim.hudText then
+			Aim.hudText = hudText
+			fx.hudLabel.Text = hudText
+		end
+
+		-- sem alvo: esconde retículo, tracer e highlight
+		if not (Aim.target and part) then
+			fx.ret.Visible = false
+			fx.tracer.Visible = false
+			if Aim.hl then Aim.hl.Adornee = nil end
+			return
+		end
+
+		-- posição do alvo na tela (com predição opcional)
+		local aimPos = part.Position
+		if Cfg.Predict > 0 then
+			aimPos = aimPos + part.AssemblyLinearVelocity * ((c.CFrame.Position - aimPos).Magnitude / Cfg.Predict)
+		end
+		local v = c:WorldToViewportPoint(aimPos)
+		local sp = Vector2.new(v.X, v.Y)
+		Aim.lastScreen = sp
+
+		-- retículo + nome + vida
+		fx.ret.Visible = Cfg.ShowReticle
+		fx.ret.Position = UDim2.fromOffset(sp.X, sp.Y)
+		fx.retName.Text = Aim.name .. "  ·  " .. math.floor(d3 or 0) .. " st"
+		fx.retName.TextColor3 = col
+		local h = Aim.target:FindFirstChildOfClass("Humanoid")
+		local frac = h and math.clamp(h.Health / math.max(h.MaxHealth, 1), 0, 1) or 1
+		fx.retBar.Size = UDim2.fromScale(frac, 1)
+		fx.retBar.BackgroundColor3 = Color3.fromHSV(0.33 * frac, 0.8, 1)
+
+		-- tracer
+		local delta = sp - center
+		local len = delta.Magnitude
+		fx.tracer.Visible = Cfg.ShowTracer and len > 4
+		fx.tracer.Position = UDim2.fromOffset(center.X, center.Y)
+		fx.tracer.Size = UDim2.fromOffset(len, state == "locked" and 2 or 1)
+		fx.tracer.Rotation = math.deg(math.atan2(delta.Y, delta.X))
+		fx.tracer.BackgroundColor3 = col
+
+		-- highlight no corpo do alvo
+		if Cfg.Highlight then
+			if not Aim.hl then
+				Aim.hl = create("Highlight", {
+					FillTransparency = 0.72, OutlineTransparency = 0.1,
+					DepthMode = Enum.HighlightDepthMode.AlwaysOnTop, Parent = ESPFolder,
+				})
+			end
+			if Aim.hl.Adornee ~= Aim.target then Aim.hl.Adornee = Aim.target end
+			Aim.hl.FillColor = col
+			Aim.hl.OutlineColor = col
+		elseif Aim.hl then
+			Aim.hl.Adornee = nil
+		end
+
+		-- mira de verdade (só enquanto estiver segurando)
+		if held then
+			if len > Cfg.Deadzone then
+				local alpha = 1 - (math.clamp(Cfg.Smooth, 0, 95) / 100) ^ (dt * 60)
+				if Cfg.Method == 2 and mousemoverel then
+					local mv = delta * alpha
+					pcall(mousemoverel, mv.X, mv.Y)
 				else
-					Refs.session.Text = string.format("%02dm %02ds", math.floor(elapsed / 60), elapsed % 60)
+					if Cfg.Method == 2 and not mousemoverel and not Aim.warnedMouse then
+						Aim.warnedMouse = true
+						Notify("Aimbot", "Executor sem mousemoverel. Usando método Camera.", 4)
+					end
+					c.CFrame = c.CFrame:Lerp(CFrame.lookAt(c.CFrame.Position, aimPos), alpha)
 				end
-				local count = #Players:GetPlayers() .. "/" .. Players.MaxPlayers
-				Refs.players.Text = count
-				Refs.srvPlayers.Text = count
-				local age = math.floor(workspace.DistributedGameTime)
-				local ageText = string.format("%dh %02dm %02ds", math.floor(age / 3600), math.floor((age % 3600) / 60), age % 60)
-				Refs.age.Text = ageText
-				Refs.srvAge.Text = ageText
-				local ok, ping = pcall(function() return game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue() end)
-				if not ok or not ping then ping = LocalPlayer:GetNetworkPing() * 1000 end
-				Refs.ping.Text = math.floor(ping) .. "ms"
 			end
-			frames = 0
-			lastStat = now
+			if Cfg.Trigger and len <= math.max(8, Cfg.Deadzone + 6) and os.clock() - Aim.lastTrig > 0.09 then
+				Aim.lastTrig = os.clock()
+				fireShot(center)
+			end
 		end
-	end))
+	end
 
-	-- Loop do ESP
-	task.spawn(function()
-		while ScreenGui.Parent do
-			local any = false
-			for _, on in pairs(ESP.Enabled) do
-				if on then any = true break end
+	local function safeStep(dt)
+		local ok, err = pcall(step, dt)
+		if not ok and os.clock() - Aim.lastErr > 5 then
+			Aim.lastErr = os.clock()
+			warn("[ShadowHub] Aimbot: " .. tostring(err))
+		end
+	end
+
+	-- ======================================================
+	-- 5) LIGAR / DESLIGAR
+	-- ======================================================
+	local function start()
+		if Aim.on then return end
+		if Aim.closing or Aim.fx then hardStop() end
+		Aim.on, Aim.closing, Aim.intro = true, false, 0
+		Aim.hudText, Aim.lockedTarget, Aim.target = "", nil, nil
+		Aim.fx = buildFx()
+		table.insert(Aim.conns, UserInputService.InputBegan:Connect(function(input)
+			if Cfg.KeyMode == 1 and input.UserInputType == Enum.UserInputType.MouseButton2 then
+				Aim.holding = true
+			elseif Cfg.KeyMode == 2 and input.UserInputType == Enum.UserInputType.MouseButton1 then
+				Aim.holding = true
 			end
-			if any then pcall(ESP.Tick) end
-			task.wait(Perf.Lite and 0.6 or 0.25)
+		end))
+		table.insert(Aim.conns, UserInputService.InputEnded:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton2 or input.UserInputType == Enum.UserInputType.MouseButton1 then
+				Aim.holding = false
+			end
+		end))
+		pcall(function() RunService:UnbindFromRenderStep("ShadowAimbot") end)
+		RunService:BindToRenderStep("ShadowAimbot", Enum.RenderPriority.Camera.Value + 1, safeStep)
+		syncEsp()
+	end
+
+	local function stop()
+		if not Aim.on then return end
+		Aim.on, Aim.closing = false, true
+		for _, cn in ipairs(Aim.conns) do pcall(function() cn:Disconnect() end) end
+		Aim.conns = {}
+		Aim.holding, Aim.touchHeld = false, false
+		syncEsp()
+		task.delay(1.5, function()
+			if Aim.closing then hardStop() end
+		end)
+	end
+
+	-- ESP de inimigos (só aparece com o Aimbot ligado)
+	ESP.Register("AimEnemies", function()
+		local out = {}
+		if not (Aim.on and Cfg.EspEnemies) then return out end
+		eachEnemy(function(char, name)
+			local root = char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
+			if root and alive(char) then
+				out[#out + 1] = {part = root, hl = char, text = name,
+					color = (char == Aim.target) and LOCK_COLOR or COLORS.Cyan}
+			end
+		end)
+		return out
+	end)
+
+	table.insert(cleanupFns, function() hardStop() end)
+
+	-- ======================================================
+	-- 6) INTERFACE: aba "Aimbot"
+	-- ======================================================
+	local page = createTab("Aimbot", ICONS.Combat, false, 35)
+	local group = createSubGroup("Aimbot", page)
+	local pMain = group.Add("Main", ICONS.Bolt)
+	local pTarget = group.Add("Target", ICONS.Search)
+	local pVisual = group.Add("Visuals", ICONS.Shield)
+	local pExtra = group.Add("Extra", ICONS.Settings)
+
+	local labels = {}
+
+	-- MAIN
+	local secPower = AddSection(pMain, "Power", "Aimbot", "Main")
+	AddToggle(secPower, "Aimbot", "Off = nothing runs and nothing shows on screen", false, function(on)
+		if on then
+			start()
+			Notify("Aimbot", "Active. " .. (IS_TOUCH and "Hold the AIM button." or KEY_MODES[Cfg.KeyMode]), 3, true)
+		else
+			stop()
 		end
 	end)
 
-	track(LocalPlayer.CharacterAdded:Connect(function(char)
-		cHum, cRoot = nil, nil
-		Original.Speed, Original.Jump = nil, nil
-		Mv.touched = {}
-		table.clear(Mv.parts)
-		Mv.refresh = 0
-		Mv.fly = nil
-		Mv.vel = Vector3.zero
-		if State.Fly then
-			task.spawn(function()
-				char:WaitForChild("Humanoid", 8)
-				char:WaitForChild("HumanoidRootPart", 8)
-				task.wait(0.4)
-				if State.Fly and LocalPlayer.Character == char then Mv.startFly() end
-			end)
+	local secInfo = AddSection(pMain, "Status", "Aimbot", "Main")
+	labels.status = AddInfo(secInfo, "State", "Off")
+	labels.target = AddInfo(secInfo, "Target", "-")
+	labels.dist = AddInfo(secInfo, "Distance", "-")
+	labels.locks = AddInfo(secInfo, "Locks", "0")
+	labels.kills = AddInfo(secInfo, "Eliminations", "0")
+
+	local secInput = AddSection(pMain, "Input", "Aimbot", "Main")
+	local btnKey, btnMethod
+	btnKey = AddButton(secInput, "Aim key: " .. KEY_MODES[Cfg.KeyMode], function()
+		Cfg.KeyMode = Cfg.KeyMode % #KEY_MODES + 1
+		Aim.holding = false
+		btnKey.Text = "Aim key: " .. KEY_MODES[Cfg.KeyMode]
+	end)
+	btnMethod = AddButton(secInput, "Method: " .. METHODS[Cfg.Method], function()
+		Cfg.Method = Cfg.Method % #METHODS + 1
+		btnMethod.Text = "Method: " .. METHODS[Cfg.Method]
+	end)
+	AddText(secInput, "Camera = gira a câmera (funciona na maioria dos jogos). Mouse = move o mouse (use se o jogo trava a câmera). No celular, segure o botão AIM que aparece na tela.")
+
+	-- TARGET
+	local secAim = AddSection(pTarget, "Aim", "Aimbot", "Target")
+	AddSlider(secAim, "FOV radius", 30, 600, Cfg.FOV, 5, " px", function(v) Cfg.FOV = v end)
+	AddSlider(secAim, "Smoothness", 0, 95, Cfg.Smooth, 1, "%", function(v) Cfg.Smooth = v end)
+	AddSlider(secAim, "Max distance", 100, 5000, Cfg.MaxDist, 50, " st", function(v) Cfg.MaxDist = v end)
+	AddSlider(secAim, "Prediction speed (0 = off)", 0, 1500, Cfg.Predict, 25, " st/s", function(v) Cfg.Predict = v end)
+	AddSlider(secAim, "Deadzone", 0, 30, Cfg.Deadzone, 1, " px", function(v) Cfg.Deadzone = v end)
+	local btnPart
+	btnPart = AddButton(secAim, "Aim part: " .. PART_MODES[Cfg.PartMode], function()
+		Cfg.PartMode = Cfg.PartMode % #PART_MODES + 1
+		btnPart.Text = "Aim part: " .. PART_MODES[Cfg.PartMode]
+	end)
+
+	local secRules = AddSection(pTarget, "Rules", "Aimbot", "Target")
+	AddToggle(secRules, "Team check", "Ignores teammates", Cfg.TeamCheck, function(on) Cfg.TeamCheck = on end, true)
+	AddToggle(secRules, "Wall check", "Only targets you can see", Cfg.WallCheck, function(on) Cfg.WallCheck = on end, true)
+	AddToggle(secRules, "Sticky target", "Keeps the target until it leaves the FOV", Cfg.Sticky, function(on) Cfg.Sticky = on end, true)
+	AddToggle(secRules, "Include NPCs / bots", "Humanoids that are not players", Cfg.NPCs, function(on)
+		Cfg.NPCs = on
+		Aim.npcT = 0
+	end, true)
+
+	-- VISUALS
+	local secFx = AddSection(pVisual, "Effects", "Aimbot", "Visuals")
+	AddToggle(secFx, "FOV ring", "Glowing ring with a rotating comet", Cfg.ShowFov, function(on) Cfg.ShowFov = on end, true)
+	AddToggle(secFx, "Target reticle", "Rotating reticle, name, distance and health", Cfg.ShowReticle, function(on) Cfg.ShowReticle = on end, true)
+	AddToggle(secFx, "Tracer line", "Line from your aim to the target", Cfg.ShowTracer, function(on) Cfg.ShowTracer = on end, true)
+	AddToggle(secFx, "Target highlight", "Glow around the target's body", Cfg.Highlight, function(on) Cfg.Highlight = on end, true)
+	AddToggle(secFx, "Kill effect", "Burst + ELIMINATED text", Cfg.KillFx, function(on) Cfg.KillFx = on end, true)
+	AddToggle(secFx, "Lock sound", "Sound when locking and on kills", Cfg.LockSound, function(on) Cfg.LockSound = on end, true)
+	AddToggle(secFx, "Rainbow ring", "Cycles the ring colors", Cfg.Rainbow, function(on) Cfg.Rainbow = on end, true)
+
+	local secEsp = AddSection(pVisual, "Enemies", "Aimbot", "Visuals")
+	AddToggle(secEsp, "Enemy ESP", "Highlights every enemy while Aimbot is on", Cfg.EspEnemies, function(on)
+		Cfg.EspEnemies = on
+		syncEsp()
+	end, true)
+
+	-- EXTRA
+	local secExtra = AddSection(pExtra, "Extra", "Aimbot", "Extra")
+	AddToggle(secExtra, "Pause when hub is open", "Aim and effects hide while this menu is open", Cfg.PauseMenu, function(on) Cfg.PauseMenu = on end, true)
+	AddToggle(secExtra, "Triggerbot", "Clicks automatically when the target is on your crosshair", Cfg.Trigger, function(on) Cfg.Trigger = on end, true)
+	AddText(secExtra, "O Triggerbot só dispara enquanto você estiver mirando (segurando a tecla de mira) e o alvo estiver bem no centro. Usa mouse1click ou clique virtual.")
+
+	-- Atualiza os textos de status (só com a aba aberta)
+	task.spawn(function()
+		while ScreenGui.Parent do
+			task.wait(0.4)
+			if isOpen and tabs.Aimbot and tabs.Aimbot.Active then
+				local held = Aim.on and (Cfg.KeyMode == 3 or Aim.holding or Aim.touchHeld)
+				labels.status.Text = not Aim.on and "Off" or (Aim.target and (held and "Locked" or "Target in FOV") or "Scanning")
+				labels.target.Text = (Aim.on and Aim.target) and Aim.name or "-"
+				labels.dist.Text = (Aim.on and Aim.target) and (math.floor(Aim.dist) .. " st") or "-"
+				labels.locks.Text = tostring(Aim.locks)
+				labels.kills.Text = tostring(Aim.kills)
+			end
 		end
-	end))
-
-	-- Abrir / fechar
-	local animToken = 0
-	local function setOpen(state)
-		if state == isOpen then return end
-		isOpen = state
-		animToken = animToken + 1
-		local token = animToken
-		Sfx.Play(isOpen and "Open" or "Close")
-		if isOpen then
-			currentScale = computeScale()
-			hubCenter = clampCenter(hubCenter)
-			MainFrame.Position = UDim2.fromOffset(hubCenter.X, hubCenter.Y)
-			MainFrame.Visible = true
-			StarContainer.Visible = State.Stars and not Perf.Lite
-			HubScale.Scale = currentScale * 0.9
-			MainFrame.GroupTransparency = 1
-			tween(MainFrame, 0.35, {GroupTransparency = 0})
-			tween(HubScale, 0.4, {Scale = currentScale}, Enum.EasingStyle.Back)
-			tween(FloatingBtn, 0.4, {Rotation = 180})
-			tween(BtnStroke, 0.4, {Color = COLORS.Cyan, Transparency = 0})
-		else
-			tween(MainFrame, 0.25, {GroupTransparency = 1})
-			tween(HubScale, 0.25, {Scale = currentScale * 0.9}, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
-			tween(FloatingBtn, 0.4, {Rotation = 0})
-			tween(BtnStroke, 0.4, {Color = COLORS.AccentGlow, Transparency = 0.2})
-			task.delay(0.27, function()
-				if animToken == token and not isOpen then
-					MainFrame.Visible = false
-				end
-			end)
-		end
-	end
-
-	MinimizeBtn.MouseButton1Click:Connect(function() setOpen(false) end)
-
-	track(ScreenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-		currentScale = computeScale()
-		if isOpen then HubScale.Scale = currentScale end
-		hubCenter = clampCenter(hubCenter)
-		MainFrame.Position = UDim2.fromOffset(hubCenter.X, hubCenter.Y)
-	end))
-
-	-- Tecla do menu (PC)
-	track(UserInputService.InputBegan:Connect(function(input, gp)
-		if listeningKey and input.UserInputType == Enum.UserInputType.Keyboard then
-			listeningKey = false
-			if input.KeyCode ~= Enum.KeyCode.Escape then toggleKey = input.KeyCode end
-			if Refs.keyBtn then
-				Refs.keyBtn.Text = toggleKey.Name
-				tween(Refs.keyBtn, 0.15, {BackgroundColor3 = COLORS.CardHeader})
-			end
-			Notify("Keybind", "Menu key: " .. toggleKey.Name, 2)
-			return
-		end
-		if not gp and input.KeyCode == toggleKey then setOpen(not isOpen) end
-	end))
-
-	-- Arraste (mouse e toque)
-	local function makeDrag(handle, onStart, onMove, onEnd)
-		local active, dragInput, startPos = false, nil, Vector2.zero
-		handle.InputBegan:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-				active, dragInput = true, input
-				startPos = Vector2.new(input.Position.X, input.Position.Y)
-				onStart()
-			end
-		end)
-		track(UserInputService.InputChanged:Connect(function(input)
-			if active and (input.UserInputType == Enum.UserInputType.MouseMovement or input == dragInput) then
-				onMove(Vector2.new(input.Position.X, input.Position.Y) - startPos)
-			end
-		end))
-		track(UserInputService.InputEnded:Connect(function(input)
-			if active and (input == dragInput or input.UserInputType == Enum.UserInputType.MouseButton1) then
-				active = false
-				onEnd()
-			end
-		end))
-	end
-
-	local hubMoved, hubStart, ghostPos = false, hubCenter, hubCenter
-	local function attachHubDrag(handle)
-		makeDrag(handle,
-			function() hubMoved = false; hubStart = hubCenter; ghostPos = hubCenter end,
-			function(delta)
-				if not hubMoved and delta.Magnitude > 3 then
-					hubMoved = true
-					InputBlocker.Visible = true
-					DragGhost.Size = UDim2.fromOffset(hubPixelSize().X, hubPixelSize().Y)
-					DragGhost.Visible = true
-				end
-				if hubMoved then
-					ghostPos = clampCenter(hubStart + delta)
-					DragGhost.Position = UDim2.fromOffset(ghostPos.X, ghostPos.Y)
-				end
-			end,
-			function()
-				if hubMoved then
-					hubMoved = false
-					hubCenter = ghostPos
-					DragGhost.Visible = false
-					InputBlocker.Visible = false
-					tween(MainFrame, 0.3, {Position = UDim2.fromOffset(hubCenter.X, hubCenter.Y)})
-				end
-			end
-		)
-	end
-	attachHubDrag(Sidebar)
-	attachHubDrag(TopHeader)
-
-	local fbMoved, fbStart = false, Vector2.zero
-	makeDrag(FloatingBtn,
-		function()
-			fbMoved = false
-			fbStart = Vector2.new(FloatingBtn.AbsolutePosition.X, FloatingBtn.AbsolutePosition.Y)
-		end,
-		function(delta)
-			if not fbMoved and delta.Magnitude > 6 then
-				fbMoved = true
-				InputBlocker.Visible = true
-			end
-			if fbMoved then
-				local s = screenSize()
-				local p = fbStart + delta
-				p = Vector2.new(math.clamp(p.X, 0, math.max(0, s.X - 48)), math.clamp(p.Y, 0, math.max(0, s.Y - 48)))
-				FloatingBtn.Position = UDim2.fromOffset(p.X, p.Y)
-			end
-		end,
-		function()
-			InputBlocker.Visible = false
-			if not fbMoved then setOpen(not isOpen) end
-			fbMoved = false
-		end
-	)
-
-	-- Unload completo
-	UnloadHub = function()
-		for _, fn in ipairs(cleanupFns) do pcall(fn) end
-		env.__ShadowHookFn = nil
-		State.Fly = false
-		Mv.stopFly()
-		Mv.restoreSpeed()
-		Mv.restoreJump()
-		Mv.restoreNoclip()
-		Vis.restoreFullbright()
-		Vis.restoreFog()
-		setAntiLag(false)
-		setUltra(false)
-		setLowGfx(false)
-		setAntiAfk(false)
-		setAutoRejoin(false)
-		pcall(function() RunService:Set3dRenderingEnabled(true) end)
-		if Original.Fov and workspace.CurrentCamera then workspace.CurrentCamera.FieldOfView = Original.Fov end
-		pcall(function() LocalPlayer.CameraMaxZoomDistance = origMaxZoom end)
-		for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
-		connections = {}
-		env.__ShadowHubUnload = nil
-		if ESPFolder then ESPFolder:Destroy() end
-		if ScreenGui then ScreenGui:Destroy() end
-	end
-	env.__ShadowHubUnload = UnloadHub
-
-	-- Inicialização
-	currentScale = computeScale()
-	local s = screenSize()
-	hubCenter = clampCenter(Vector2.new(s.X / 2, s.Y / 2))
-	MainFrame.Position = UDim2.fromOffset(hubCenter.X, hubCenter.Y)
-	HubScale.Scale = currentScale
-	setActiveTab("Home")
-
-	task.delay(0.3, function()
-		setOpen(true)
-		Notify("Dark Shadow Hub", IS_TOUCH and "Loaded. Tap the floating button to toggle." or ("Loaded. Press " .. toggleKey.Name .. " to toggle."), 3)
 	end)
 end
